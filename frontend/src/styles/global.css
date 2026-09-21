@@ -10,6 +10,28 @@
 html {
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
+
+  /* 滚动条槽常驻 —— 修「切换页面时固定导航与右侧元素横向抖一下」。
+   *
+   * 起因：展示页的两种模式都是**内部滚动容器**
+   *   .immersive / .gallery 都是 height:100dvh + 自己的 overflow-y，
+   *   此时 body 不滚动 → 视口没有滚动条 → 可用宽度是满的；
+   * 而壁纸库是 **body 滚动**（.archive 只设 min-height）
+   *   → body 滚动条出现 → 可用宽度少 6px（见下方 ::-webkit-scrollbar 的 6px）。
+   * 于是来回切页时，position:fixed 的导航和所有靠右的元素一起横移 6px。
+   *
+   * 两条都要：
+   *   scrollbar-gutter 是新标准属性，现代浏览器（Chrome 94+ / Firefox 97+）
+   *     会在**不需要滚动条时也预留**那条槽，宽度恒定；
+   *   overflow-y: scroll 是 Safari 的老兜底（它早先不支持 scrollbar-gutter），
+   *     强制让视口永远有滚动条。两者指向同一条槽，不会重复占位。
+   *
+   * 代价（明确知情）：沉浸模式那种满幅大图的右侧会出现一条 6px 的近黑底槽。
+   * 这是「宽度恒定」必然的代价 —— 想消掉它只能改用 overlay 滚动条，
+   * 而那样抖动问题又会回来。另外移动端本来就是 overlay 滚动条，不受影响。
+   */
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
 }
 
 /* ===== Body 基础样式 ===== */

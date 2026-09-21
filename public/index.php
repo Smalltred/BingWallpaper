@@ -110,7 +110,18 @@ if ($path === '/index.php') {
 // ============================================================
 //  /api —— 统一限流
 // ============================================================
-if (str_starts_with($path, '/api')) {
+//
+// ⚠️ 这里的判断必须是「正好是 /api」或「/api/ 开头」，
+// 不能图省事写成 str_starts_with($path, '/api') —— 那样 /api-docs
+// （SPA 里的接口文档页，见 router.js）也会被归进接口：
+//   1. 白吃一份接口限流额度（刷新文档页会消耗 200 次/分钟的配额）；
+//   2. 更致命的是下面 SPA 回退处的同款判断会把 /api-docs 当作
+//      「打错的接口路径」直接 404，SPA 永远看不到这个路由。
+//   3. 还会给一个 HTML 页面下发 RateLimit-* 头。
+// 所以抽成 $isApiPath，两处共用同一个语义。
+$isApiPath = $path === '/api' || str_starts_with($path, '/api/');
+
+if ($isApiPath) {
     if ($method === 'OPTIONS') {
         Response::preflight();
     }
@@ -234,7 +245,27 @@ if ($method === 'GET' && ($path === '/docs' || $path === '/docs/')) {
         Response::html('<h1>文档加载失败</h1><p>请检查 app/views/docs.html 是否存在。</p>', 500);
     }
 
-    Response::html((string) file_get_contents($docsFile));
+    $html = (string) file_get_contents($docsFile);
+
+    // embed=1：SPA 用 iframe 内嵌本页时（见 frontend/src/views/docs.vue），
+    // 给 <html> 打上 .embed —— docs.html 里的 .embed 规则会隐藏它自带的 topbar
+    // 和底部「← 返回首页」，避免出现「SPA 导航 + 文档 topbar」双头部。
+    //
+    // 为什么在这边做而不是在 docs.html 里写一段内联 <script> 判断 location.search：
+    // 响应头里的 CSP 是 script-src 'self'，内联脚本会被浏览器直接拦掉。
+    // 服务端注入还顺带得到两个好处 —— 不闪一下 topbar（脚本版会先渲染再隐藏），
+    // 以及 JS 被禁用时也能正确内嵌。不带参数访问时输出与原先逐字节一致。
+    if (Request::query('embed') === '1') {
+        $injected = preg_replace('/<html\b/', '<html class="embed"', $html, 1);
+        // 注入点没匹配上就老实输出原文，不要因为「美化」把文档搞坏
+        if (is_string($injected)) {
+            $html = $injected;
+        } else {
+            Log::warn('docs.html 的 <html> 标签未匹配到，embed 模式未生效');
+        }
+    }
+
+    Response::html($html);
 }
 
 // ============================================================
@@ -289,7 +320,9 @@ if ($method === 'GET') {
     // 另：/api 开头的路径绝不能走 SPA 回退，否则打错的接口路径会返回一份
     // 200 + HTML，调用方拿到的是网页而不是错误码，排查成本极高。
     // （Node 版是靠正则 /^\/(?!api)/ 做到这一点的。）
-    if (!str_starts_with($path, '/api') && pathinfo($path, PATHINFO_EXTENSION) === '') {
+    // 判据复用上面的 $isApiPath：只覆盖真正的接口命名空间，
+    // 不误伤 /api-docs 这类「名字以 api 开头、其实是页面」的路径。
+    if (!$isApiPath && pathinfo($path, PATHINFO_EXTENSION) === '') {
         $index = $projectRoot . '/public/index.html';
         if (is_file($index)) {
             // index.html 引用的是带 hash 的资源名，它本身绝不能被长缓存，

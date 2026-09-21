@@ -68,6 +68,18 @@
   }
   .topbar__nav a:hover { color: var(--text-primary); background: var(--surface-hover); }
 
+  /* ===== 内嵌模式 =====
+   * SPA 用 <iframe src="/docs?embed=1"> 打开本页时（见 frontend/src/views/docs.vue），
+   * 后端会给 <html> 注入 class="embed"（见 public/index.php 的 /docs 处理）。
+   * 目的：去掉「SPA 导航 + 文档自带 topbar」的双头部，让文档完全融进 SPA。
+   * 不带 ?embed=1 直接访问时 <html> 上没有这个 class，一切照旧（sitemap 与外部
+   * API 用户走的仍是这一条）。
+   *
+   * 不用清「给 topbar 预留的顶部留白」：本页 .topbar 是 position:sticky，
+   * 占的是正常文档流，display:none 之后那 64px 自己就没了，没有额外 padding 要改。 */
+  .embed .topbar { display: none; }
+  .embed .footer__back { display: none; }
+
   .container { max-width: 920px; margin: 0 auto; padding: 56px 32px 96px; position: relative; z-index: 1; }
   .hero { margin-bottom: 48px; }
   .hero h1 {
@@ -348,9 +360,7 @@
   <footer>
     <span>所有端点公开，无鉴权。</span>
     <span>
-      <a href="/">← 返回首页</a>
-      ·
-      <a href="https://www.hecady.com" target="_blank" rel="noopener">博客</a>
+      <span class="footer__back"><a href="/">← 返回首页</a> · </span><a href="https://www.hecady.com" target="_blank" rel="noopener">博客</a>
     </span>
   </footer>
 </main>

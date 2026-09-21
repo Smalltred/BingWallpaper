@@ -2,7 +2,7 @@
 /**
  * NavBar.vue — 全站共享导航。
  *
- * 抽成组件的理由：现在有两个页面（沉浸展示页 / 壁纸库），
+ * 抽成组件的理由：现在有三个页面（沉浸展示页 / 壁纸库 / 接口文档），
  * 导航如果各写一份，样式和链接列表必然漂移 ——
  * 这个项目已经因为「两份手抄的 design token」出过一次问题，不再重复。
  *
@@ -32,10 +32,16 @@ const externalLinks = [
 
     <ul class="nav-links">
       <li>
+        <RouterLink to="/" class="nav-link">首页</RouterLink>
+      </li>
+      <li>
         <RouterLink to="/archive" class="nav-link">壁纸库</RouterLink>
       </li>
       <li>
-        <a href="/docs" target="_blank" rel="noopener" class="nav-link">接口文档</a>
+        <!-- 站内路由，不是 <a href="/docs">：/docs 是 PHP 直接吐的独立页面，
+             点它开新标签、带自己的 topbar，与 SPA 体验割裂；
+             这里走 /api-docs，站内切换、无整页刷新（见 views/docs.vue） -->
+        <RouterLink to="/api-docs" class="nav-link">接口文档</RouterLink>
       </li>
       <li v-for="link in externalLinks" :key="link.href" class="is-external">
         <a :href="link.href" target="_blank" rel="noopener" class="nav-link">{{ link.label }}</a>
