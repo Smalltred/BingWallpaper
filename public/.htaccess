@@ -1,0 +1,36 @@
+# ============================================================================
+#  BingWallpaper — Apache 重写规则（放在 Web 根 public/ 下，Apache 会自动读取）
+#
+#  前提：站点根目录指向本目录（public/）。Apache 环境需要 AllowOverride All。
+#
+#  为什么只有这么几条：public/ 就是 Web 根，构建产物（assets/、fonts/）
+#  的 URL 路径与物理路径完全一致，Apache 直接就能发。
+#  应用代码在 Web 根之外的 app/，HTTP 天然不可达，所以不需要任何拒绝规则。
+# ============================================================================
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # 前端路由与接口：不是真实文件就交给入口
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.php [L]
+</IfModule>
+
+# 关掉目录列表
+Options -Indexes
+
+# ---- 静态资源缓存 ----
+<IfModule mod_expires.c>
+  ExpiresActive On
+  # 构建产物带内容指纹，可以长期强缓存
+  <FilesMatch "^.*-[A-Za-z0-9_-]{8}\.(js|css)$">
+    ExpiresDefault "access plus 1 year"
+    Header set Cache-Control "public, immutable"
+  </FilesMatch>
+  # 自托管字体没有指纹，只给 30 天
+  <FilesMatch "\.woff2$">
+    ExpiresDefault "access plus 30 days"
+  </FilesMatch>
+</IfModule>

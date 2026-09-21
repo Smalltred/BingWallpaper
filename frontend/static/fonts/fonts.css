@@ -1,0 +1,32 @@
+/* 自托管字体（latin 子集），由 tools/fetch-fonts.py 生成，勿手改。
+ *
+ * 中文不在此列：CJK 字体体积过大，统一回落系统字体栈
+ * （PingFang SC / 微软雅黑 / Noto Sans SC 等）。
+ *
+ * 可变字体去重说明：DM Sans、JetBrains Mono 在 400/500/700 各字重回源是
+ * 同一份可变字体文件，因此按内容去重后每族只保留一份，用 font-weight 区间声明。
+ */
+
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./PlayfairDisplay.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('./DMSans.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url('./JetBrainsMono.woff2') format('woff2');
+}

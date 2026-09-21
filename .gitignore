@@ -1,0 +1,39 @@
+# 依赖
+node_modules/
+**/node_modules/
+/vendor/
+
+# 构建产物
+# public/ 里除入口和规则文件之外都是 npm run build 生成的，不进版本库。
+# 需要可直接部署的整包用 npm run package。
+public/*
+!public/index.php
+!public/.htaccess
+!public/.gitkeep
+
+# 运行时数据：Bing 缓存与限流计数
+data/*
+!data/.gitkeep
+
+# 壁纸库数据集：只随部署包分发（tools/package.mjs 从 ../bingimages 读），不进版本库。
+# 正常情况下工作区里不会出现这个目录，这行是防止有人把部署包解压到项目根后误提交。
+dataset/
+
+# 日志
+*.log
+
+# 本地配置
+.env
+.env.local
+.env.*.local
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 打包产物
+releases/
+*.zip
+*.tar.gz

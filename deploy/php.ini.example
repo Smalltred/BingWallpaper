@@ -1,0 +1,86 @@
+; ============================================================================
+;  php.ini —— BingWallpaper 后端推荐配置（PHP 8.2）
+;
+;  用法：把本文件复制到 PHP 安装目录并改名成 php.ini，
+;        或设置环境变量 PHPRC 指向本文件所在目录。
+;        用 `php --ini` 确认它确实被加载了。
+; ============================================================================
+
+; ---- 扩展 ----
+; 相对路径 "ext" 相对 php.exe 所在目录解析
+extension_dir = "ext"
+
+extension=curl       ; 出站 HTTP（Http.php 的主路径）
+extension=openssl    ; HTTPS 必需；stream 回退路径也依赖它
+extension=mbstring   ; 非 UTF-8 响应体的 charset 转换
+extension=fileinfo   ; 静态文件服务的 MIME 嗅探兜底
+extension=pdo_sqlite ; 只读 bingimages 数据集（壁纸库页面的数据来源）
+
+; opcache 是 Zend 扩展，只能用 zend_extension 加载。
+; 写成 extension=opcache 会报 "Invalid library (appears to be a Zend Extension)"。
+zend_extension=opcache
+
+; 注意：json / filter / iconv / pcre / zlib 自 PHP 8.0 起已内置编译，
+; 不再需要（也不存在）对应的 php_xxx.dll，不要去找它。
+
+; ---- HTTPS 根证书（Windows 上必配）----
+; Windows 版 PHP **不自带 CA 根证书库**（Linux 发行版通常自动读 /etc/ssl/certs）。
+; 不配这两项，所有 HTTPS 出站请求都会失败并报：
+;   SSL certificate verify result: unable to get local issuer certificate (20)
+; 表现就是 /api/bing/today 一律 500，但站点其它页面看着都正常。
+; Node.js 自带 CA 库，所以从 Node 迁到 PHP 时这个问题只会在 PHP 侧冒出来。
+;
+; 获取 CA 包（任选其一）：
+;   下载 https://curl.se/ca/cacert.pem 到任意目录
+;   或使用发行版自带的证书文件（如 Linux 的 /etc/ssl/certs/ca-certificates.crt）
+; 然后把下面两行改成实际路径：
+; curl.cainfo    = "/绝对路径/cacert.pem"
+; openssl.cafile = "/绝对路径/cacert.pem"
+
+; ---- 字符集与时区 ----
+default_charset = "UTF-8"
+date.timezone = "Asia/Shanghai"
+
+; ---- 错误处理 ----
+; display_errors 必须关闭：这是纯 JSON API，任何 warning/notice 被打印到
+; 输出里都会直接破坏 JSON 结构，导致前端 JSON.parse 失败。
+; 错误走 error_log（CLI / 内置服务器会写到终端），不进入响应体。
+display_errors = Off
+display_startup_errors = Off
+log_errors = On
+error_reporting = E_ALL & ~E_DEPRECATED
+
+; ---- 安全 ----
+; 不要在响应头里暴露 PHP 版本
+expose_php = Off
+; 站点无文件上传、无 Cookie、无会话
+file_uploads = Off
+session.auto_start = 0
+allow_url_include = Off
+; 出站 HTTP 的 stream 回退路径需要它
+allow_url_fopen = On
+
+; open_basedir 把 PHP 可访问的文件系统限制在指定目录内，是共享主机上的重要加固。
+; 这里默认注释掉：一旦路径写得不准或项目换位置，就会到处报
+; "open_basedir restriction in effect"，排查成本高于收益。
+; 需要时取消注释，并确认覆盖「PHP 自身目录 + 项目根 + 临时目录」：
+; open_basedir = "/usr/share/php:/var/www/bingwallpaper:/tmp"
+
+; ---- 资源限制 ----
+memory_limit = 128M
+max_execution_time = 30
+post_max_size = 2M
+upload_max_filesize = 2M
+
+; ---- 性能 ----
+; 静态文件由 nginx 负责压缩更合适；保持关闭也避免与 nginx 的 gzip 叠加。
+zlib.output_compression = Off
+
+; 开发期每次校验文件时间戳，改完代码即时生效；
+; 生产环境建议改成 validate_timestamps=0，并在部署脚本里 reload php-fpm。
+opcache.enable = 1
+opcache.enable_cli = 0
+opcache.validate_timestamps = 1
+opcache.revalidate_freq = 0
+opcache.memory_consumption = 128
+opcache.max_accelerated_files = 10000

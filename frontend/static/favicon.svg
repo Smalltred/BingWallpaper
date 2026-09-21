@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="BingWallpaper">
+  <defs>
+    <radialGradient id="halo" cx="0.650" cy="0.320" r="0.35">
+      <stop offset="0%" stop-color="#d4a853" stop-opacity="0.5"/>
+      <stop offset="60%" stop-color="#d4a853" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#d4a853" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="rc"><rect width="64" height="64" rx="12.8" ry="12.8"/></clipPath>
+  </defs>
+  <g clip-path="url(#rc)">
+    <rect width="64" height="64" fill="#0a0a0c"/>
+    <circle cx="41.6" cy="20.48" r="14.144" fill="url(#halo)"/>
+    <circle cx="41.6" cy="20.48" r="8.32" fill="#d4a853"/>
+    <polygon points="0.00,64.00 0.00,46.08 16.00,37.12 32.00,41.60 49.92,32.00 64.00,39.68 64.00,64.00" fill="#1c1c1f"/>
+    <polygon points="0.00,64.00 0.00,54.40 11.52,44.80 28.80,52.48 39.68,43.52 56.32,48.00 64.00,54.40 64.00,64.00" fill="#141416"/>
+  </g>
+</svg>

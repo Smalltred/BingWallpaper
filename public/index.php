@@ -1,0 +1,281 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * 前端控制器 —— 所有请求的唯一入口。
+ *
+ * 对应原 Node 版 backend/server.js 的路由与中间件部分：
+ *   安全头 → CORS → 路由 → 限流（仅 /api）→ 静态 → SPA 回退 → 404 → 错误兜底
+ *
+ * 为什么用单一入口而不是多个 .php 文件直连：
+ *   一是路由、限流、安全头这些横切逻辑只需要写一遍；
+ *   二是 nginx / Apache 只要把「文件不存在的请求」都转到这里就够了，配置简单；
+ *   三是目录穿越这类路径层面的安全校验集中在一处，好审。
+ */
+
+// 缓冲输出：任何意外的提前输出（BOM、php 文件尾随空白）
+// 都不会导致 header() 失败。真正的响应在 Response 里 echo 后统一吐出。
+ob_start();
+
+use BingWallpaper\Archive;
+use BingWallpaper\Bing;
+use BingWallpaper\Cache;
+use BingWallpaper\Config;
+use BingWallpaper\Log;
+use BingWallpaper\RateLimiter;
+use BingWallpaper\Request;
+use BingWallpaper\Response;
+use BingWallpaper\StaticFiles;
+
+// ---- 自动加载 ----
+// 手写 PSR-4 加载器，因此这个项目**不需要 composer**。
+// 存在 vendor/autoload.php 时优先使用，方便日后真引入依赖。
+//
+// 目录约定：public/ 是 Web 根（宝塔里把「运行目录」指向它），
+// 应用代码在 public/ 之外的 app/ 里 —— 这样 src 永远不可能被直接访问，
+// 也就不需要在 nginx/Apache 里写任何拒绝规则。
+$projectRoot = dirname(__DIR__);
+if (is_file($projectRoot . '/vendor/autoload.php')) {
+    require $projectRoot . '/vendor/autoload.php';
+} else {
+    spl_autoload_register(static function (string $class) use ($projectRoot): void {
+        $prefix = 'BingWallpaper\\';
+        if (!str_starts_with($class, $prefix)) {
+            return;
+        }
+
+        $file = $projectRoot . '/app/' . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
+        if (is_file($file)) {
+            require $file;
+        }
+    });
+}
+
+Config::bootstrap($projectRoot);
+
+// ---- 未捕获异常 → 统一 JSON 500 ----
+// 响应体绝不带异常细节：这是公开服务，堆栈只应进日志。
+set_exception_handler(static function (Throwable $e): void {
+    Log::error('未捕获错误: ' . $e->getMessage() . PHP_EOL . $e->getTraceAsString());
+
+    if (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+
+    if (!headers_sent()) {
+        Response::securityHeaders();
+        Response::json(['error' => '服务器内部错误'], 500);
+    }
+});
+
+// ---- 全站响应头 ----
+Response::securityHeaders();
+Response::cors();
+
+$method = Request::method();
+$path = Request::path();
+
+// /index.php 视同首页。
+// 不加这条的话，直接访问入口文件会走到「带扩展名的路径按静态资源处理」那一支，
+// 得到一个 404 JSON —— 而 .php 又必须被静态服务拒绝（否则会吐源码），
+// 所以只能在这里归一化。
+if ($path === '/index.php') {
+    $path = '/';
+}
+
+// ============================================================
+//  /api —— 统一限流
+// ============================================================
+if (str_starts_with($path, '/api')) {
+    if ($method === 'OPTIONS') {
+        Response::preflight();
+    }
+
+    $limiter = new RateLimiter(
+        Config::dataSubDir('ratelimit'),
+        Config::rateLimitWindow(),
+        Config::rateLimitMax()
+    );
+
+    $result = $limiter->hit(Request::clientIp(Config::trustProxy()));
+    RateLimiter::applyHeaders($result);
+
+    if (!$result['allowed']) {
+        header('Retry-After: ' . $result['reset']);
+        Response::json(['error' => '请求过于频繁，请稍后再试'], 429);
+    }
+}
+
+$cache = static fn (): Cache => new Cache(Config::dataDir(), 'bing-wallpapers', Config::cacheTtl());
+
+if ($method === 'GET' && $path === '/api/bing/today') {
+    $result = (new Bing($cache()))->today('1080p');
+    Response::json($result['body'], $result['status']);
+}
+
+if ($method === 'GET' && $path === '/api/bing/today-4k') {
+    $result = (new Bing($cache()))->today('4k');
+    Response::json($result['body'], $result['status']);
+}
+
+// /api/bing/image/:resolution —— 放在两条固定路径之后，避免误吞
+if ($method === 'GET' && preg_match('#^/api/bing/image/([^/]+)$#', $path, $m) === 1) {
+    $outcome = (new Bing($cache()))->imageRedirect(
+        rawurldecode($m[1]),
+        (string) Request::query('id', '')
+    );
+
+    if ($outcome['status'] === 302 && isset($outcome['location'])) {
+        Response::redirect($outcome['location']);
+    }
+
+    Response::json(['error' => $outcome['error'] ?? '请求无效'], $outcome['status']);
+}
+
+// ============================================================
+//  /api/archive —— 历史壁纸归档（数据来自 bingimages 数据集）
+// ============================================================
+
+/**
+ * 读取可选的整数查询参数并做范围校验。
+ * 越界一律 400，与 /api/bing/image 的入参校验保持同样的严格度 ——
+ * 静默夹取值会掩盖调用方的 bug。
+ */
+$intParam = static function (string $name, int $default, int $min, int $max): int {
+    $raw = Request::query($name);
+    if ($raw === null || trim($raw) === '') {
+        return $default;
+    }
+
+    $trimmed = trim($raw);
+    if (preg_match('/^\d+$/', $trimmed) !== 1) {
+        Response::json(['error' => "参数 {$name} 必须是正整数"], 400);
+    }
+
+    $value = (int) $trimmed;
+    if ($value < $min || $value > $max) {
+        Response::json(['error' => "参数 {$name} 超出允许范围（{$min}-{$max}）"], 400);
+    }
+
+    return $value;
+};
+
+$archive = static function () use ($intParam): Archive {
+    $store = new Archive(Config::archiveDbPath());
+
+    if (!$store->isAvailable()) {
+        // 具体路径只进日志：公开服务不应把服务器目录结构回给调用方
+        Log::error('数据集不可用: ' . $store->dbPath());
+        Response::json(['error' => '壁纸数据集未就绪'], 503);
+    }
+
+    return $store;
+};
+
+if ($method === 'GET' && $path === '/api/archive/stats') {
+    Response::json([
+        'message' => 'success',
+        'code' => 200,
+        'data' => $archive()->stats(),
+    ]);
+}
+
+if ($method === 'GET' && $path === '/api/archive/wallpapers') {
+    $page = $intParam('page', 1, 1, 100000);
+    $size = $intParam('size', Config::archivePageSize(), 1, Config::archiveMaxPageSize());
+
+    $rawYear = trim((string) Request::query('year', ''));
+    $year = $rawYear === '' ? null : $intParam('year', 0, 2016, 2100);
+
+    $keyword = trim((string) Request::query('keyword', ''));
+    if (mb_strlen($keyword) > 100) {
+        Response::json(['error' => '参数 keyword 过长（最多 100 字符）'], 400);
+    }
+
+    Response::json([
+        'message' => 'success',
+        'code' => 200,
+        'data' => $archive()->page($page, $size, $keyword, $year),
+    ]);
+}
+
+// ============================================================
+//  /docs —— 接口文档（正文在 app/views/docs.html）
+// ============================================================
+if ($method === 'GET' && ($path === '/docs' || $path === '/docs/')) {
+    $docsFile = $projectRoot . '/app/views/docs.html';
+
+    if (!is_readable($docsFile)) {
+        Log::error('docs.html 不存在或不可读: ' . $docsFile);
+        Response::html('<h1>文档加载失败</h1><p>请检查 app/views/docs.html 是否存在。</p>', 500);
+    }
+
+    Response::html((string) file_get_contents($docsFile));
+}
+
+// ============================================================
+//  SEO 端点
+// ============================================================
+if ($method === 'GET' && $path === '/sitemap.xml') {
+    $today = date('Y-m-d');
+    $origin = htmlspecialchars(Config::siteOrigin(), ENT_XML1);
+
+    Response::text(
+        '<?xml version="1.0" encoding="UTF-8"?>' . "\n"
+        . '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n"
+        . "  <url>\n    <loc>{$origin}/</loc>\n"
+        . "    <lastmod>{$today}</lastmod>\n"
+        . "    <changefreq>daily</changefreq>\n    <priority>1.0</priority>\n  </url>\n"
+        . "  <url>\n    <loc>{$origin}/archive</loc>\n"
+        . "    <lastmod>{$today}</lastmod>\n"
+        . "    <changefreq>daily</changefreq>\n    <priority>0.9</priority>\n  </url>\n"
+        . "  <url>\n    <loc>{$origin}/docs</loc>\n"
+        . "    <lastmod>{$today}</lastmod>\n"
+        . "    <changefreq>weekly</changefreq>\n    <priority>0.6</priority>\n  </url>\n"
+        . "</urlset>\n",
+        'application/xml; charset=utf-8'
+    );
+}
+
+if ($method === 'GET' && $path === '/robots.txt') {
+    Response::text(
+        "User-agent: *\nAllow: /\nDisallow: /api/\n"
+        . 'Sitemap: ' . Config::siteOrigin() . "/sitemap.xml\n",
+        'text/plain; charset=utf-8'
+    );
+}
+
+// ============================================================
+//  静态文件 → SPA 回退 → 404
+// ============================================================
+if ($method === 'GET') {
+    // Web 根就是 public/ —— 构建产物（assets/ fonts/ 图标…）直接放在它下面，
+    // 所以 URL 路径与物理路径是一致的，不需要任何拒绝规则：
+    // public/ 里本来就只有「可以公开」的东西。
+    $static = new StaticFiles([$projectRoot . '/public']);
+
+    if ($static->trySend($path)) {
+        exit;
+    }
+
+    // 带扩展名的路径按静态资源处理：缺失就老实 404。
+    // 否则构建产物换 hash 后，旧页面请求旧 chunk 会拿到 HTML 而不是 404，
+    // 排查报错时极易被误导。
+    //
+    // 另：/api 开头的路径绝不能走 SPA 回退，否则打错的接口路径会返回一份
+    // 200 + HTML，调用方拿到的是网页而不是错误码，排查成本极高。
+    // （Node 版是靠正则 /^\/(?!api)/ 做到这一点的。）
+    if (!str_starts_with($path, '/api') && pathinfo($path, PATHINFO_EXTENSION) === '') {
+        $index = $projectRoot . '/public/index.html';
+        if (is_file($index)) {
+            // index.html 引用的是带 hash 的资源名，它本身绝不能被长缓存，
+            // 否则发新版后老访客会一直请求已删除的旧 chunk
+            Response::text((string) file_get_contents($index), 'text/html; charset=utf-8', 200, [
+                'Cache-Control' => 'no-cache',
+            ]);
+        }
+    }
+}
+
+Response::json(['error' => '接口不存在'], 404);

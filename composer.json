@@ -1,0 +1,28 @@
+{
+  "name": "smalltred/bingwallpaper",
+  "description": "BingWallpaper — Bing 每日壁纸展示（Vue 3 SPA + PHP 8.2 后端，零第三方依赖）",
+  "type": "project",
+  "license": "MIT",
+  "require": {
+    "php": ">=8.2"
+  },
+  "suggest": {
+    "ext-curl": "更快的出站 HTTP 通道；缺失时自动回退到 stream wrapper（功能等价，稍慢）",
+    "ext-openssl": "HTTPS 必需 —— curl 与 stream 两条通道都依赖它",
+    "ext-mbstring": "把非 UTF-8 的响应体转成 UTF-8；缺失时回退到 iconv",
+    "ext-pdo_sqlite": "只读 bingimages 数据集，「壁纸库」页面需要",
+    "ext-opcache": "字节码缓存，显著降低每次请求的编译开销（用 zend_extension 加载）"
+  },
+  "autoload": {
+    "psr-4": {
+      "BingWallpaper\\": "app/"
+    }
+  },
+  "config": {
+    "sort-packages": true
+  },
+  "scripts": {
+    "serve": "php tools/serve.php",
+    "lint": "php tools/lint-php.php"
+  }
+}

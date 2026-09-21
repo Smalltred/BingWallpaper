@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="theme-color" content="#0a0a0c">
+<title>BingWallpaper · API 接口文档</title>
+<!-- 自托管字体（由 tools/fetch-fonts.py 生成），不再依赖 fonts.googleapis.com -->
+<link rel="preload" as="font" type="font/woff2" href="/fonts/DMSans.woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<style>
+  :root {
+    --canvas: #0a0a0c;
+    --surface: #141416;
+    --surface-hover: #1c1c1f;
+    --border: rgba(255,255,255,0.06);
+    --border-strong: rgba(255,255,255,0.12);
+    --text-primary: rgba(255,255,255,0.88);
+    --text-secondary: rgba(255,255,255,0.55);
+    --text-tertiary: rgba(255,255,255,0.35);
+    --accent: #d4a853;
+    --accent-hover: #e8c068;
+    --accent-soft: rgba(212,168,83,0.12);
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 16px;
+    --transition: 0.4s cubic-bezier(0.22,1,0.36,1);
+    --transition-fast: 0.2s ease-out;
+    --ease: cubic-bezier(0.22,1,0.36,1);
+    --font-display: 'Playfair Display','Noto Serif SC',Georgia,serif;
+    --font-body: 'DM Sans','Noto Sans SC',-apple-system,sans-serif;
+    --font-mono: 'JetBrains Mono','SFMono-Regular',Consolas,monospace;
+  }
+  *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    font-family: var(--font-body);
+    background: var(--canvas);
+    color: var(--text-primary);
+    min-height: 100vh;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    content:''; position:fixed; inset:0; z-index:0; pointer-events:none;
+    opacity: 0.03; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+  ul { list-style: none; }
+
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 32px; height: 64px;
+    background: rgba(20,20,22,0.85); backdrop-filter: blur(20px) saturate(1.5);
+    -webkit-backdrop-filter: blur(20px) saturate(1.5);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .topbar__left { display:flex; align-items:center; gap:12px; }
+  .topbar__dot { width:8px; height:8px; border-radius:50%; background:var(--accent); }
+  .topbar__title { font-family: var(--font-display); font-size:1.25rem; letter-spacing:0.02em; }
+  .topbar__nav { display:flex; gap:24px; }
+  .topbar__nav a {
+    color: var(--text-secondary); font-size:0.9rem;
+    padding: 6px 12px; border-radius: var(--radius-sm);
+    transition: color var(--transition-fast), background var(--transition-fast);
+  }
+  .topbar__nav a:hover { color: var(--text-primary); background: var(--surface-hover); }
+
+  .container { max-width: 920px; margin: 0 auto; padding: 56px 32px 96px; position: relative; z-index: 1; }
+  .hero { margin-bottom: 48px; }
+  .hero h1 {
+    font-family: var(--font-display);
+    font-size: 2.5rem; font-weight: 700;
+    margin-bottom: 12px;
+  }
+  .hero p { color: var(--text-secondary); font-size: 1rem; max-width: 640px; }
+
+  .badges { display:flex; gap:8px; flex-wrap:wrap; margin-top:16px; }
+  .badge {
+    display:inline-flex; align-items:center; gap:6px;
+    padding: 4px 10px; font-size:0.75rem;
+    border: 1px solid var(--border-strong); border-radius: 99px;
+    color: var(--text-secondary);
+  }
+  .badge--accent { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+  .section { margin-bottom: 40px; }
+  .section__title {
+    display:flex; align-items:center; gap:12px;
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.15em;
+    color: var(--accent); margin-bottom: 16px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section__title::before {
+    content:''; width: 16px; height: 1px; background: var(--accent);
+  }
+  .section__desc { color: var(--text-secondary); font-size:0.9rem; margin-bottom:24px; }
+
+  .endpoint {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 20px 24px; margin-bottom: 16px;
+    transition: border-color var(--transition);
+  }
+  .endpoint:hover { border-color: var(--border-strong); }
+  .endpoint__head {
+    display:flex; align-items:center; gap:12px; flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .method {
+    font-family: var(--font-mono); font-size: 0.75rem; font-weight: 500;
+    padding: 3px 8px; border-radius: var(--radius-sm);
+    letter-spacing: 0.05em;
+  }
+  .method--get    { background: rgba(74,222,128,0.12); color: #4ade80; border: 1px solid rgba(74,222,128,0.3); }
+  .path {
+    font-family: var(--font-mono); font-size: 0.95rem; color: var(--text-primary); font-weight: 500;
+  }
+  .endpoint__desc { color: var(--text-secondary); font-size:0.9rem; margin-bottom: 16px; }
+  .endpoint__title { font-size: 1.05rem; font-weight: 500; color: var(--text-primary); }
+  .endpoint__row { margin-bottom: 12px; }
+  .endpoint__label {
+    font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--text-tertiary); margin-bottom: 6px;
+  }
+  .endpoint__list { font-size: 0.85rem; color: var(--text-secondary); padding-left: 20px; list-style: disc; }
+  .endpoint__list li { margin-bottom: 4px; }
+  .endpoint__list code, .endpoint__list b { color: var(--accent); font-weight: 500; font-family: var(--font-mono); }
+  pre {
+    background: var(--canvas); border: 1px solid var(--border);
+    border-radius: var(--radius-md); padding: 14px 16px;
+    overflow-x: auto;
+  }
+  pre code {
+    font-family: var(--font-mono); font-size: 0.8rem;
+    color: var(--text-primary); line-height: 1.6;
+    white-space: pre;
+  }
+  .json-key  { color: #93c5fd; }
+  .json-str  { color: #fca5a5; }
+  .json-num  { color: #fbbf24; }
+  .json-bool { color: #c4b5fd; }
+
+  footer {
+    margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--border);
+    color: var(--text-tertiary); font-size: 0.85rem;
+    display:flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  }
+  footer a { color: var(--text-secondary); }
+  footer a:hover { color: var(--accent); }
+
+  @media (max-width: 640px) {
+    .topbar { padding: 0 16px; }
+    .container { padding: 32px 16px 64px; }
+    .hero h1 { font-size: 1.875rem; }
+    pre { font-size: 0.75rem; }
+    .endpoint { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar__left">
+    <div class="topbar__dot"></div>
+    <div class="topbar__title">BingWallpaper · API</div>
+  </div>
+  <nav class="topbar__nav">
+    <a href="/">首页</a>
+    <a href="https://www.bing.com" target="_blank" rel="noopener">Bing</a>
+  </nav>
+</header>
+
+<main class="container">
+  <section class="hero">
+    <h1>接口文档</h1>
+    <p>所有 <code>/api/*</code> 端点均<strong style="color:var(--accent)">公开访问</strong>，无需鉴权、无需密钥。返回 JSON 格式，UTF-8 编码；Bing 数据走 1 小时内存缓存，按 IP 限流 200 次/分钟。</p>
+    <div class="badges">
+      <span class="badge badge--accent">v1.0 · 公开</span>
+      <span class="badge">PHP 8.2 · 无框架</span>
+      <span class="badge">内存缓存 · 1 小时</span>
+      <span class="badge">归档 3851 天</span>
+      <span class="badge">JSON · UTF-8</span>
+    </div>
+  </section>
+
+  <!-- ===== Bing 壁纸 ===== -->
+  <section class="section">
+    <h2 class="section__title">Bing 壁纸</h2>
+    <p class="section__desc">代理 Bing 官方 HPImageArchive.aspx 的真实数据，带 1 小时内存缓存（过期后由下次请求触发刷新）。</p>
+
+    <article class="endpoint">
+      <div class="endpoint__head">
+        <span class="method method--get">GET</span>
+        <span class="path">/api/bing/today</span>
+      </div>
+      <div class="endpoint__title">今日 + 历史 7 天壁纸数据（1080p URL）</div>
+      <p class="endpoint__desc">从 Bing 官方拉取 8 张壁纸（今日 + 倒序 7 天），URL 默认带 <code>w=1920&amp;h=1080</code>，适合页面瀑布流浏览。</p>
+      <div class="endpoint__row">
+        <div class="endpoint__label">响应示例</div>
+<pre><code>{
+  <span class="json-key">"message"</span>: <span class="json-str">"success"</span>,
+  <span class="json-key">"code"</span>: <span class="json-num">200</span>,
+  <span class="json-key">"data"</span>: [
+    {
+      <span class="json-key">"url"</span>: <span class="json-str">"https://www.bing.com/th?id=OHR.LavenderRows_ZH-CN..._UHD.jpg&amp;...&amp;w=1920&amp;h=1080..."</span>,
+      <span class="json-key">"date"</span>: <span class="json-str">"20260704"</span>,
+      <span class="json-key">"title"</span>: <span class="json-str">"紫色花海"</span>,
+      <span class="json-key">"location"</span>: <span class="json-str">"瓦朗索勒高原的薰衣草行，普罗旺斯，法国 (© ...)"</span>
+    }
+  ]
+}</code></pre>
+      </div>
+      <div class="endpoint__row">
+        <div class="endpoint__label">字段说明</div>
+        <ul class="endpoint__list">
+          <li><b>url</b> · 1080p (w=1920&amp;h=1080) Bing CDN 地址，含 <code>_UHD.jpg</code> 后缀说明源是 4K</li>
+          <li><b>date</b> · YYYYMMDD 格式，Bing 当日 8 位日期</li>
+          <li><b>title</b> · 中文化标题</li>
+          <li><b>location</b> · 拍摄地 + 版权归属（括号内）</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="endpoint">
+      <div class="endpoint__head">
+        <span class="method method--get">GET</span>
+        <span class="path">/api/bing/today-4k</span>
+      </div>
+      <div class="endpoint__title">今日 + 历史 7 天壁纸数据（4K URL）</div>
+      <p class="endpoint__desc">同上，但 URL 参数改写为 <code>w=3840&amp;h=2160</code>，Bing CDN 返回真 4K JPG（实测约 1.5 MB/张），适合下载或外部消费方。</p>
+      <div class="endpoint__row">
+        <div class="endpoint__label">差异</div>
+        <ul class="endpoint__list">
+          <li>URL 中 <b>w=1920 → 3840</b>、<b>h=1080 → 2160</b></li>
+          <li>与 <code>/api/bing/today</code> 共享同一份缓存</li>
+          <li>单张约 1.5 MB，<b>8 张全加载约 12 MB</b>，注意带宽</li>
+          <li>站点前端只在「大图查看」和「下载」时用 4K，列表展示一律 1080p</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="endpoint">
+      <div class="endpoint__head">
+        <span class="method method--get">GET</span>
+        <span class="path">/api/bing/image/:resolution</span>
+      </div>
+      <div class="endpoint__title">单图重定向（兼容旧版用法）</div>
+      <p class="endpoint__desc">传入分辨率 + Bing 图床 ID，302 重定向到 Bing CDN 对应尺寸的图。宽高限定 320–3840 / 240–2160，ID 字符集受限。</p>
+      <div class="endpoint__row">
+        <div class="endpoint__label">Query 参数</div>
+        <ul class="endpoint__list">
+          <li><b>id</b> · Bing 图床 id，例如 <code>OHR.LavenderRows_ZH-CN0676810895_UHD.jpg</code></li>
+        </ul>
+      </div>
+      <div class="endpoint__row">
+        <div class="endpoint__label">示例</div>
+<pre><code>curl -L "http://localhost:2665/api/bing/image/1920x1080?id=OHR.LavenderRows_ZH-CN0676810895_UHD.jpg"</code></pre>
+      </div>
+    </article>
+  </section>
+
+  <!-- ===== 历史壁纸归档 ===== -->
+  <section class="section">
+    <h2 class="section__title">历史壁纸归档</h2>
+    <p class="section__desc">
+      数据来自 bingimages 数据集（合并 niumoo 与 Zhu-junwei 两个仓库），覆盖 2016-03-05 至今共 3851 天、无日期缺口。
+      由后端只读打开 SQLite 提供，支持关键词搜索、年份筛选与分页。数据目录可用 <code>BINGIMAGES_DIR</code> 配置。
+    </p>
+
+    <article class="endpoint">
+      <div class="endpoint__head">
+        <span class="method method--get">GET</span>
+        <span class="path">/api/archive/stats</span>
+      </div>
+      <div class="endpoint__title">归档统计</div>
+      <p class="endpoint__desc">总量、日期范围与每年条数。前端用它渲染页头与年份下拉。</p>
+      <div class="endpoint__row">
+        <div class="endpoint__label">响应示例</div>
+<pre><code>{
+  <span class="json-key">"message"</span>: <span class="json-str">"success"</span>,
+  <span class="json-key">"code"</span>: <span class="json-num">200</span>,
+  <span class="json-key">"data"</span>: {
+    <span class="json-key">"total"</span>: <span class="json-num">3851</span>,
+    <span class="json-key">"min_date"</span>: <span class="json-str">"2016-03-05"</span>,
+    <span class="json-key">"max_date"</span>: <span class="json-str">"2026-09-19"</span>,
+    <span class="json-key">"by_year"</span>: [ { <span class="json-key">"year"</span>: <span class="json-num">2016</span>, <span class="json-key">"count"</span>: <span class="json-num">302</span> } ]
+  }
+}</code></pre>
+      </div>
+    </article>
+
+    <article class="endpoint">
+      <div class="endpoint__head">
+        <span class="method method--get">GET</span>
+        <span class="path">/api/archive/wallpapers</span>
+      </div>
+      <div class="endpoint__title">分页 + 搜索 + 年份筛选</div>
+      <p class="endpoint__desc">按日期倒序返回。关键词在 title / title_en / copyright / copyright_en / date 五个字段上匹配（LIKE 通配符已转义）。</p>
+      <div class="endpoint__row">
+        <div class="endpoint__label">Query 参数</div>
+        <ul class="endpoint__list">
+          <li><b>page</b> · 页码，从 1 起（默认 1）</li>
+          <li><b>size</b> · 每页条数，1–100（默认 24）</li>
+          <li><b>keyword</b> · 关键词，最长 100 字符；日期用前缀匹配，搜 <code>2024-10</code> 能命中整个 10 月</li>
+          <li><b>year</b> · 年份，2016 起</li>
+        </ul>
+      </div>
+      <div class="endpoint__row">
+        <div class="endpoint__label">响应示例</div>
+<pre><code>{
+  <span class="json-key">"message"</span>: <span class="json-str">"success"</span>,
+  <span class="json-key">"code"</span>: <span class="json-num">200</span>,
+  <span class="json-key">"data"</span>: {
+    <span class="json-key">"total"</span>: <span class="json-num">3851</span>, <span class="json-key">"page"</span>: <span class="json-num">1</span>, <span class="json-key">"size"</span>: <span class="json-num">24</span>, <span class="json-key">"has_more"</span>: <span class="json-bool">true</span>,
+    <span class="json-key">"items"</span>: [{
+      <span class="json-key">"date"</span>: <span class="json-str">"2026-09-19"</span>,
+      <span class="json-key">"title"</span>: <span class="json-str">"穿越山口腹地"</span>,
+      <span class="json-key">"title_en"</span>: <span class="json-str">"Winnats Pass, Peak District National Park, England"</span>,
+      <span class="json-key">"copyright"</span>: <span class="json-str">"温纳茨山口，峰区国家公园，英格兰 (© Daniel_Kay/Getty Images)"</span>,
+      <span class="json-key">"url"</span>: <span class="json-str">"https://cn.bing.com/th?id=...&amp;w=1920&amp;h=1080"</span>,
+      <span class="json-key">"url_4k"</span>: <span class="json-str">"https://cn.bing.com/th?id=...&amp;w=3840&amp;h=2160"</span>,
+      <span class="json-key">"region"</span>: <span class="json-str">"zh-cn"</span>,
+      <span class="json-key">"sources"</span>: [<span class="json-str">"zhujunwei"</span>]
+    }]
+  }
+}</code></pre>
+      </div>
+      <div class="endpoint__row">
+        <div class="endpoint__label">关于 url_4k</div>
+        <ul class="endpoint__list">
+          <li>只有 <code>cn.bing.com</code> 的图可按参数升到 4K，此时 <b>url_4k</b> 有值</li>
+          <li><code>cdn.bimg.cc</code> / <code>bing.com</code> 的历史图 Bing 侧没有 4K 版本（实测 404），<b>url_4k 为 null</b></li>
+          <li>这个判断在服务端算好，消费方不需要自己解析 URL</li>
+        </ul>
+      </div>
+      <div class="endpoint__row">
+        <div class="endpoint__label">越界入参</div>
+        <ul class="endpoint__list">
+          <li>非正整数或超出范围一律 <b>400</b>，不做静默夹取</li>
+          <li>数据集未就绪时返回 <b>503</b> <code>{"error":"壁纸数据集未就绪"}</code></li>
+        </ul>
+      </div>
+    </article>
+  </section>
+
+  <footer>
+    <span>所有端点公开，无鉴权。</span>
+    <span>
+      <a href="/">← 返回首页</a>
+      ·
+      <a href="https://www.hecady.com" target="_blank" rel="noopener">博客</a>
+    </span>
+  </footer>
+</main>
+
+</body>
+</html>

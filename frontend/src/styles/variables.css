@@ -1,0 +1,41 @@
+/* ===== Design Tokens ===== */
+:root {
+  /* 画布与表面 */
+  --canvas: #0a0a0c;
+  --surface: #141416;
+  --surface-hover: #1c1c1f;
+
+  /* 边框 */
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+
+  /* 文字 */
+  --text-primary: rgba(255, 255, 255, 0.88);
+  --text-secondary: rgba(255, 255, 255, 0.55);
+  --text-tertiary: rgba(255, 255, 255, 0.35);
+
+  /* 主题色 */
+  --accent: #d4a853;
+  --accent-hover: #e8c068;
+  --accent-soft: rgba(212, 168, 83, 0.12);
+
+  /* 状态色 */
+  --success: #4ade80;
+
+  /* 圆角 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  /* 动效 */
+  --transition: 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --transition-fast: 0.2s ease-out;
+
+  /* 字体 */
+  --font-display: 'Playfair Display', 'Noto Serif SC', Georgia, serif;
+  --font-body: 'DM Sans', 'Noto Sans SC', -apple-system, sans-serif;
+
+  /* 布局尺寸 */
+  --nav-height: 64px;  /* 顶部导航高度；gallery 等被它遮挡的内容用此变量计算 padding-top */
+}

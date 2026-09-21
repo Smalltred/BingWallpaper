@@ -1,0 +1,114 @@
+# ============================================================================
+#  nginx 站点配置示例 —— BingWallpaper (PHP 8.2)
+#
+#  放置位置（Debian/Ubuntu）：/etc/nginx/sites-available/bingwallpaper
+#  启用：ln -s /etc/nginx/sites-available/bingwallpaper /etc/nginx/sites-enabled/
+#
+#  如果你用宝塔等面板，不需要本文件（面板会自动生成 vhost）；
+#  只需把项目根的 nginx-rewrite.conf 内容粘到「伪静态」，
+#  并把站点「运行目录」设为 /public。
+#
+#  设计要点：站点根指向 public/。构建产物（assets/、fonts/）的 URL 路径
+#  与物理路径完全一致，所以静态资源由 nginx 直接发送，不需要任何特殊规则；
+#  只有 /archive、/docs、/api/* 这些不是真实文件的路径才回退给 index.php。
+# ============================================================================
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name bing.hecady.com;
+
+    # 有证书后把 80 上的内容删掉，只留这条跳转
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name bing.hecady.com;
+
+    # ---- TLS ----
+    ssl_certificate     /etc/letsencrypt/live/bing.hecady.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/bing.hecady.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+    # 确认整站只用 HTTPS 后再开，先加上会被浏览器记住一年
+    # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # ---- 站点根 = Web 根 ----
+    # 指向 public/：入口在这里，构建产物也在这里，URL 与物理路径一致。
+    # 应用代码在 ../app、运行时数据在 ../data，都在 Web 根之外，HTTP 够不着。
+    root /var/www/bingwallpaper/public;
+    index index.php;
+
+    # 客户端请求体上限（本站全是 GET，留个小值就够）
+    client_max_body_size 1m;
+
+    # ---- 日志 ----
+    access_log /var/log/nginx/bingwallpaper.access.log;
+    error_log  /var/log/nginx/bingwallpaper.error.log warn;
+
+    # ---- 压缩 ----
+    # PHP 侧已关闭 zlib.output_compression，避免与这里叠加
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types
+        text/plain
+        text/css
+        text/javascript
+        application/javascript
+        application/json
+        application/xml
+        image/svg+xml;
+
+    # ---- 前端路由与接口 ----
+    # 已存在的文件（assets/、fonts/、图标）由 nginx 直接发；
+    # 其余不是真实文件的路径交给入口。
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # ---- PHP ----
+    location ~ [^/]\.php(/|$) {
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        fastcgi_index index.php;
+
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param DOCUMENT_ROOT   $document_root;
+
+        # ★ 必须让 PHP 知道真实客户端 IP，否则限流会把所有访客算成同一来源。
+        #
+        # 这里是**覆盖**写法：无论客户端自带什么 X-Forwarded-For，都替换成它
+        # 与本机的真实连接地址，客户端因此无法伪造。
+        # 若改成 nginx 默认的 $proxy_add_x_forwarded_for（追加），
+        # 客户端可以自己塞一个假 IP 混进来 —— 那种情况下应把 .env 里的
+        # TRUST_PROXY 设为 0。
+        fastcgi_param HTTP_X_FORWARDED_FOR $remote_addr;
+
+        # 上游超时：Bing 抓取那边有 12s 上限，这里留出余量
+        fastcgi_read_timeout 30s;
+    }
+
+    # ---- 静态资源缓存 ----
+    # 构建产物文件名带内容指纹（index-a1b2c3.js），内容变了文件名就变，
+    # 所以可以放心设一年 immutable。
+    location ^~ /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # 自托管字体按字族命名（没有指纹），只给 30 天，否则换字体会被老缓存挡住
+    location ^~ /fonts/ {
+        expires 30d;
+    }
+
+    # ---- 隐藏文件 ----
+    location ~ /\. {
+        deny all;
+    }
+}

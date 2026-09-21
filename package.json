@@ -1,0 +1,26 @@
+{
+  "name": "bingwallpaper",
+  "version": "1.0.0",
+  "description": "BingWallpaper — Bing 每日壁纸展示（Vue 3 SPA + PHP 8.2 后端）",
+  "private": true,
+  "scripts": {
+    "install:all": "cd frontend && npm install",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "build": "node tools/prebuild.mjs && npm run build --prefix frontend",
+    "fresh": "npm run install:all && npm run build",
+    "package": "npm run build && node tools/package.mjs",
+    "serve": "php tools/serve.php",
+    "start": "php tools/serve.php",
+    "lint:php": "php tools/lint-php.php",
+    "lint:js": "eslint .",
+    "lint": "npm run lint:php && npm run lint:js",
+    "tools:fonts": "python tools/fetch-fonts.py",
+    "tools:og": "python tools/make-og-image.py"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.15.0",
+    "eslint": "^9.15.0",
+    "eslint-plugin-vue": "^9.31.0",
+    "globals": "^15.12.0"
+  }
+}
