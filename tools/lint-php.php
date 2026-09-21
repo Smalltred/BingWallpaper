@@ -22,7 +22,14 @@ declare(strict_types=1);
  * 规避办法：先 chdir 到项目根，只传纯 ASCII 的相对路径。
  */
 
-$projectRoot = dirname(__DIR__);
+// 项目根 = tools/ 的上一级。
+// ⚠️ 不用 dirname(__DIR__)：与 public/index.php 同一个坑（opcache 常量折叠 +
+// 非 ASCII 路径会折叠出错误结果），写法统一以免两处推导出不同的根。
+$here = __DIR__;
+$projectRoot = realpath($here . '/..');
+if ($projectRoot === false) {
+    $projectRoot = dirname($here, 1);
+}
 $scanDirs = [$projectRoot . '/app', $projectRoot . '/public'];
 
 $files = [];

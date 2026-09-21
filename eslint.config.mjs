@@ -15,7 +15,11 @@ export default [
       'public/**', // Web 根：入口 index.php 与打包后的 JS（压缩产物不该 lint）
       'frontend/static/**', // 构建输入资产（字体、图标、分享图）
       'data/**', // 运行时数据
-      'deploy/**'
+      'deploy/**',
+      // 项目根已上移到工作区根，bingimages/ 因此落在本仓库内。
+      // 它是数据集 + 两个第三方参考仓库（含各自压缩过的 app.js），
+      // 既不属于本项目的 JS，也不该被 lint —— 不忽略会稳定报 26 个 error。
+      'bingimages/**'
     ]
   },
 

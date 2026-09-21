@@ -35,7 +35,30 @@ use BingWallpaper\StaticFiles;
 // 目录约定：public/ 是 Web 根（宝塔里把「运行目录」指向它），
 // 应用代码在 public/ 之外的 app/ 里 —— 这样 src 永远不可能被直接访问，
 // 也就不需要在 nginx/Apache 里写任何拒绝规则。
-$projectRoot = dirname(__DIR__);
+// 项目根 = public/ 的上一级。
+//
+// ⚠️ 这里刻意**不写** dirname(__DIR__)。
+//
+// 原因：开启 opcache 的 SAPI（php -S 内置服务器、php-fpm）会对它做**常量折叠**，
+// 而这颗 PHP 8.2.33 (Windows) 在**路径含非 ASCII** 时折叠出的结果是错的 ——
+// 实测 __DIR__ 已是 ...\必应图片展示\public，折叠出来的却是 ...\WorkBuddy（少了两级），
+// 于是 is_file($projectRoot . '/app/Config.php') 为 false，autoloader 拿不到文件，
+// 全站以 `Class "BingWallpaper\Config" not found` 500。
+//
+// 为什么以前没暴露：CLI 下 opcache.enable_cli 默认 Off（不折叠）→ 正常；
+// 纯 ASCII 路径下也不折叠出错 → 正常（所以线上 Linux 站点通常没事）。
+// 这个坑只在「本机中文路径 + 内置服务器」这一组合下才亮出来，且症状是全站 500、无堆栈，
+// 极易被误判成 PHP 扩展缺失。
+//
+// 规避：先把 __DIR__ 落到变量，再用 realpath 求文件系统真值 ——
+// 变量参与的函数调用不会被折叠成错值。realpath 失败时退回 dirname($here, 1)：
+// 显式传 levels 的写法同样不参与折叠（实测两种写法都返回正确值）。
+$here = __DIR__;
+$projectRoot = realpath($here . '/..');
+if ($projectRoot === false) {
+    $projectRoot = dirname($here, 1);
+}
+
 if (is_file($projectRoot . '/vendor/autoload.php')) {
     require $projectRoot . '/vendor/autoload.php';
 } else {

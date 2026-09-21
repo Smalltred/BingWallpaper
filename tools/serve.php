@@ -22,12 +22,24 @@ use BingWallpaper\Http;
 use BingWallpaper\Log;
 
 // 启动器不经过前端控制器的自动加载器，这里手动引入它用到的三个类。
-// 注意用的是 dirname(__DIR__)：本文件在 tools/ 下，应用代码在 app/ 下。
-require dirname(__DIR__) . '/app/Log.php';
-require dirname(__DIR__) . '/app/Config.php';
-require dirname(__DIR__) . '/app/Http.php';
+// 本文件在 tools/ 下，应用代码在 app/ 下 —— 项目根 = tools/ 的上一级。
+//
+// ⚠️ 写法刻意与 public/index.php 保持一致，不用 dirname(__DIR__)：理由见那边的注释
+// （opcache 常量折叠 + 非 ASCII 路径会折叠出错误结果）。
+// 本文件目前只跑在 CLI 下（opcache.enable_cli 默认 Off）所以暂时不会犯，
+// 但两处必须推导出同一个值 —— 否则启动器自检打印的「数据目录」
+// 和真正跑起来的站点会指向不同位置，排查时极难发现。
+$here = __DIR__;
+$projectRoot = realpath($here . '/..');
+if ($projectRoot === false) {
+    $projectRoot = dirname($here, 1);
+}
 
-Config::bootstrap(dirname(__DIR__));
+require $projectRoot . '/app/Log.php';
+require $projectRoot . '/app/Config.php';
+require $projectRoot . '/app/Http.php';
+
+Config::bootstrap($projectRoot);
 
 /**
  * 把「来自 Windows ANSI 代码页的路径」转成 UTF-8。
