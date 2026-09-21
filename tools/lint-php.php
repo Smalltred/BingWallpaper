@@ -3,11 +3,15 @@
 declare(strict_types=1);
 
 /**
- * 对 app/ 与 public/ 下所有 PHP 文件做语法检查（php -l）。
+ * 对 app/、public/ 与 tools/ 下所有 PHP 文件做语法检查（php -l）。
  *
  * 为什么需要它：PHP 的语法错误只在**运行时**才暴露，而这个项目没有测试套件。
  * 一个多余的括号就能让线上某个端点直接 500，而本地开发时如果没有走到那条分支
  * 就完全发现不了。所以「提交前把每个文件都 -l 一遍」是这里最便宜的保险。
+ *
+ * tools/ 也要扫：update-archive.php 是**跑在生产 cron 里**的，
+ * 它一旦有语法错误，表现是「壁纸库悄悄停止更新」——没有任何人会收到报错。
+ * 这类静默失败必须挡在提交前，不能靠运行时才发现。
  *
  * 用法：
  *   php tools/lint-php.php        # 或 npm run lint:php
@@ -30,7 +34,7 @@ $projectRoot = realpath($here . '/..');
 if ($projectRoot === false) {
     $projectRoot = dirname($here, 1);
 }
-$scanDirs = [$projectRoot . '/app', $projectRoot . '/public'];
+$scanDirs = [$projectRoot . '/app', $projectRoot . '/public', $projectRoot . '/tools'];
 
 $files = [];
 foreach ($scanDirs as $root) {

@@ -42,9 +42,10 @@
 │   ├── Config.php  Request.php  Response.php  Bing.php  Archive.php
 │   ├── Http.php  Cache.php  RateLimiter.php  StaticFiles.php  Log.php
 │   └── views/docs.html      接口文档正文
-├── dataset/                 壁纸库数据集 —— 已随包内置，只读，Web 根之外
-│   └── bing_wallpapers.db   SQLite，约 1.8 MB
-├── data/                    运行时数据（Bing 缓存、限流计数）—— 需给 Web 用户可写
+├── dataset/                 壁纸库数据集 —— 已随包内置，Web 根之外
+│   └── bing_wallpapers.db   SQLite，约 1.8 MB（每天 08:00 由下面的脚本追加新行）
+├── data/                    运行时数据（Bing 缓存、限流计数、更新脚本的锁与日志）—— 需可写
+├── tools/                   └── update-archive.php  壁纸库每日更新脚本（计划任务调用，见第 7 节）
 ├── deploy/                  nginx 完整配置样例、php.ini 样例
 ├── nginx-rewrite.conf       ← 要粘到面板「伪静态」里的内容
 ├── .env                     ★ 已预置好（生产配置），一般不用改
@@ -146,9 +147,16 @@ TRUST_PROXY=1
 | `BINGIMAGES_DIR` | `dataset` | 壁纸库数据集目录，见第 6 节 |
 | `TRUST_PROXY` | `1` | 前面有 1 层 nginx 时保持 `1`；若站点直接对外则填 `0`，否则限流会把所有访客算成同一个来源 |
 
-其余可调项（`CORS_ORIGIN`、`BING_CACHE_TTL`、`API_RATE_LIMIT_*`、`APP_DEBUG` 等）
-完整说明在 `.env.example` 里 —— 那份是**全量选项清单**，保留在包内供查询，
+其余可调项（`CORS_ORIGIN`、`BING_CACHE_TTL`、`API_RATE_LIMIT_*`、`APP_DEBUG`、
+`ARCHIVE_IMAGE_BASE`、`BING_API_URL` 等）完整说明在 `.env.example` 里 ——
+那份是**全量选项清单**，保留在包内供查询，
 但**不要**直接拿它覆盖 `.env`（它默认是开发环境的值）。
+
+> `ARCHIVE_IMAGE_BASE`（默认 `https://cn.bing.com`）只影响壁纸库里的图片域名。
+> **不要**改成 `www.bing.com`：Bing 只在 `cn.bing.com` 这个域名下提供 4K 版本，
+> 改了之后每天新补的行 `url_4k` 会全变 `null`、4K 按钮集体失效
+> （`tools/update-archive.php` 检测到这种情况会直接拒绝写库并报错）。
+> 它和 `/api/bing/today` 用的域名是**两回事**，后者跟 Bing 接口原文一致，是 `www.bing.com`。
 
 
 ---
@@ -237,11 +245,99 @@ BINGIMAGES_DIR=dataset
 > `BINGIMAGES_DIR` 改成对应的绝对路径。
 
 数据集缺失或路径不对时：`/archive` 页面仍能打开并提示「暂不可用」，相关接口返回 **503**，
-**今日壁纸、接口文档等其它功能完全不受影响**。后端以只读方式打开该库
-（`PRAGMA query_only = 1`），不会写入数据集 —— 这一点在代码层面保证，即使权限给多了也一样。
+**今日壁纸、接口文档等其它功能完全不受影响**。
+
+**写入方是谁**（别再理解成「这个库永远是只读的」）：
+
+- **Web 后端只读** —— 连接后立刻 `PRAGMA query_only = 1`，从连接层禁止写操作落到数据集上，
+  即使权限给多了也一样。这一点在代码层面保证。
+- **只有每日更新脚本会写** —— `tools/update-archive.php`，由计划任务调用，
+  每天往表里 `INSERT OR IGNORE` 若干行。它**不会** UPDATE/DELETE 既有行。
+  详见下一节。
+
+## 7. 壁纸库每日自动更新
+
+数据集是 bingimages 项目用 merge 脚本**离线**产出的，最后一天停在产出那一刻。
+之后每天的新壁纸没人补，壁纸库页就会「越放越旧」。这一节用宝塔计划任务把缺口补上。
+
+### 7.1 它做什么
+
+`tools/update-archive.php` 抓一次 Bing 首页归档（北京时间当天 + 倒序 7 天，共 8 条），
+按数据集的既有约定组装成 15 列，`INSERT OR IGNORE` 进 `bing_wallpapers` 表。
+
+- **幂等**：`date` 是主键，同一天跑一百遍也只会有那一行；重复跑报告「新增 0 条」。
+- **只增不改**：不 UPDATE、不 DELETE、不覆盖已有行。
+- **防重叠**：用 `data/update-archive.lock` 加 `flock`。上一次还没跑完时，本次直接退出 0。
+- **不动图片**：只写 URL，壁纸仍直接引 Bing CDN，与站点现有行为一致。
+- **失败安全**：抓取失败 / 库不可写 / 表结构不对时写明原因并**退出非 0**，绝不写坏库。
+
+> 每天的日期按**北京时间**记（Bing 接口给的是 UTC，换算后正好是北京时间零点那天的壁纸）。
+> `region` 写 `zh-cn`、`sources` 写 `daily-api` —— 后者让你一眼能看出哪些行是每日补的。
+
+### 7.2 配计划任务（每天 08:00）
+
+面板 → **计划任务** → 添加 → 任务类型选「Shell 脚本」，执行周期选「每天」，时间 `08:00`：
+
+```bash
+/www/server/php/82/bin/php /www/wwwroot/bing.hecady.com/tools/update-archive.php >> /www/wwwroot/bing.hecady.com/data/update-archive.log 2>&1
+```
+
+把两处路径改成本站的实际值。三个容易踩的点：
+
+1. **别只写 `php`，要用绝对路径**。cron 的 `PATH` 极简，通常找不到 `php`，
+   结果就是任务「执行成功」但什么都没发生（日志里 `php: command not found`）。
+   绝对路径在面板的 PHP 设置里能看到，一般形如 `/www/server/php/82/bin/php`。
+2. **用 root 跑**（面板默认）就**不需要给 `dataset/` 额外授权** —— root 本来就能写，
+   而 Web 用户 www 只需要读。这样能保住第 3.5 节「只给 `data/` 授权、不扩大可写面」的做法。
+   如果你偏要用 www 跑，那得 `chown -R www:www dataset`。
+3. **`data/` 必须对执行用户可写**（放锁文件与日志）。第 3.5 节已经做过这件事。
+
+### 7.3 手动补跑 / 核对
+
+```bash
+cd /www/wwwroot/bing.hecady.com
+
+# 先看会写什么，不落库
+php tools/update-archive.php --dry-run
+
+# 真跑
+php tools/update-archive.php
+
+# 看历史日志（每次一行摘要，方便 grep）
+tail -n 20 data/update-archive.log
+grep 更新 data/update-archive.log 2>/dev/null
+```
+
+正常输出长这样：
+
+```
+[2026-09-21 08:00:01] 数据集：.../dataset/bing_wallpapers.db
+[2026-09-21 08:00:02] 抓到 8 条
+[2026-09-21 08:00:02] 抓到 8 条 / 新增 1 条 / 跳过 7 条
+[2026-09-21 08:00:02] 当前库：共 3853 行，日期范围 2016-03-05 ~ 2026-09-21
+```
+
+跑完可以顺手确认线上确实生效：
+
+```bash
+curl -s $BASE/api/archive/stats | head -c 200   # total 应比昨天 +1
+# 壁纸库页第一张应当就是今天
+```
+
+### 7.4 ⚠️ 本地跑 merge 重建库之后，必须补跑一次
+
+`bingimages/merge_bing_wallpapers.py` 重建库时是**整表 DROP 再建**（`write_sqlite()`
+先 unlink 旧文件），所以它产出的库里**不含**任何 `daily-api` 行 —— 每日更新写进去的
+那几天会被抹掉。
+
+- **服务器上没人跑 merge**，数据只由本脚本追加，所以线上不存在这个问题。
+- **本地**在 `bingimages/` 下跑完 merge 之后，请再跑一次：
+  `php tools/update-archive.php`，把 recent 的几天补回来，再 `npm run package` 出新包。
+- 想知道库里有几天是每日补的：
+  `sqlite3 bingimages/bing_wallpapers.db "SELECT COUNT(*) FROM bing_wallpapers WHERE sources='daily-api'"`
 
 
-## 7. 上线后验收清单
+## 8. 上线后验收清单
 
 ```bash
 BASE=https://bing.hecady.com
@@ -274,8 +370,16 @@ curl -s -D - -o /dev/null -H "Origin: https://evil.example.com" $BASE/api/bing/t
 
 - 浏览器打开站点，按 **F12 → 网络**，刷新一次：**不应该有任何 404**。
 - 用**手机浏览器**打开一次：窄屏下导航只保留站内入口，确认「壁纸库」可点。
+- **壁纸库每日更新**配好后，手动跑一次并把结果对照本文第 7.3 节：
 
-## 8. 常见问题
+  ```bash
+  cd /www/wwwroot/bing.hecady.com
+  php tools/update-archive.php          # 期望「新增 ≥1 条」且退出码 0
+  php tools/update-archive.php          # 再跑一次，期望「新增 0 条」（幂等）
+  echo $?                               # 期望 0
+  ```
+
+## 9. 常见问题
 
 | 现象 | 原因 |
 |---|---|
@@ -288,6 +392,10 @@ curl -s -D - -o /dev/null -H "Origin: https://evil.example.com" $BASE/api/bing/t
 | 所有访客共用同一个限流额度，很快就 429 | `TRUST_PROXY` 与实际代理层数不符，见 3.6 |
 | 归档里部分年份的图不显示 | CSP 的 `img-src` 漏了那个年代的图床域名（Bing 图床换过三次），由 `app/Response.php` 统一发送 |
 | 上传/解压后 403 | 文件属主或权限不对，见 3.5 |
+| 计划任务显示「成功」但壁纸库一直不更新 | 任务里只写了 `php`，cron 的 `PATH` 找不到它 → 用 PHP 绝对路径，见 7.2 |
+| 更新脚本报「数据集不可写」 | 执行用户对 `dataset/` 没有写权限。用 root 跑，或 `chown -R www:www dataset`，见 7.2 |
+| 壁纸库比实际日期旧一天 | 脚本没在跑（先看 `data/update-archive.log`）；或本地跑过 merge 重建把 `daily-api` 行抹了，见 7.4 |
+| 新补的行没有 4K 按钮 | `ARCHIVE_IMAGE_BASE` 被改成了非 `cn.bing.com`。该域名下 Bing 才有 4K，脚本会直接拒绝写库并报错，见 `app/Config.php` |
 
 > 关于 `/app/...` 返回 404 而不是 403：这是**正常的**。
 > `app/` 不在 Web 根里，服务器根本不知道有这个路径，所以返回「找不到」。

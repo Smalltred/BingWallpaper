@@ -50,7 +50,7 @@ Windows 上装 PHP 有两个必配项，漏掉会直接导致接口 500，详见
 │   ├── StaticFiles.php        静态文件服务（含目录穿越与 .php 防护）
 │   ├── Log.php                日志出口（兼容 cli / cli-server / fpm 三种 SAPI）
 │   └── views/docs.html        接口文档正文
-├── data/                      运行时数据（Bing 缓存、限流计数）—— 需可写
+├── data/                      运行时数据（Bing 缓存、限流计数、更新脚本的锁与日志）—— 需可写
 ├── deploy/                    nginx 完整配置样例、php.ini 样例
 ├── frontend/                  Vue 3 + Vite（源码；构建输出到 ../public）
 │   ├── src/
@@ -69,7 +69,8 @@ Windows 上装 PHP 有两个必配项，漏掉会直接导致接口 500，详见
 │   ├── serve.php              PHP 内置服务器启动器
 │   ├── prebuild.mjs           构建前清理 public/ 旧产物（保留入口与 .htaccess）
 │   ├── package.mjs            打包部署包
-│   ├── lint-php.php           对 app/ 与 public/ 全量 php -l
+│   ├── lint-php.php           对 app/ public/ tools/ 全量 php -l
+│   ├── update-archive.php     壁纸库每日更新（计划任务调用；随部署包分发）
 │   ├── fetch-fonts.py         生成自托管字体
 │   └── make-og-image.py       生成 og-image.png
 ├── bingimages/                壁纸库数据集源（不进仓库；打包时**只读**读入 → 包内 dataset/）
@@ -261,7 +262,10 @@ npm run package          # = npm run build && node tools/package.mjs
 
 几个刻意的取舍：
 
-- **不带前端源码、`tools/`、`node_modules`**。部署包里放源码只会让「线上跑的到底是哪一份」变含糊。
+- **不带前端源码、`node_modules`，`tools/` 只带一个文件**。部署包里放源码只会让「线上跑的
+  到底是哪一份」变含糊；唯一的例外是 `tools/update-archive.php` —— 它由线上计划任务直接调用，
+  必须随包发出去。`serve.php` / `package.mjs` / 两个 Python 脚本和 `deploy.env` 都是开发期的东西，
+  一概不进包（`tools/package.mjs` 里是逐文件白名单，不是整个目录）。
 - **带壁纸库数据集，但仓库里不放**。数据集由 `bingimages/` 目录独立产出，打包时从
   `bingimages/bing_wallpapers.db` **只读**读入、以 `dataset/bing_wallpapers.db` 进包。
   包的定位是「发布物快照」，所以不存在漂移问题；而部署方因此拿到的是零配置的整包。
@@ -283,7 +287,7 @@ npm run package          # = npm run build && node tools/package.mjs
 
 ## 壁纸库（历史归档）
 
-`/archive` 页面展示 bingimages 数据集里的 3851 天历史壁纸（2016-03-05 至今，无日期缺口），
+`/archive` 页面展示 bingimages 数据集里的 3800+ 天历史壁纸（2016-03-05 至今，无日期缺口），
 支持关键词搜索、年份筛选、无限滚动与详情弹窗。
 
 ### 数据集怎么接入
@@ -297,6 +301,23 @@ npm run package          # = npm run build && node tools/package.mjs
 - 数据集缺失时 `/archive` 与相关接口返回 **503** 并给出提示，**不影响** 今日壁纸与文档页
 
 需要 PHP 的 **pdo_sqlite** 扩展（`php.ini.example` 里已列出）。
+
+### 每日自动更新
+
+数据集是 merge 脚本**离线**产出的，最后一天停在产出那一刻；之后每天的新壁纸由
+`tools/update-archive.php` 补上（线上用宝塔计划任务每天 08:00 跑一次）：
+
+```bash
+php tools/update-archive.php            # 抓当天 + 倒序 7 天，写入库
+php tools/update-archive.php --dry-run  # 只看会写什么
+```
+
+- 只 `INSERT OR IGNORE`，**不 UPDATE / DELETE** —— `date` 是主键，重复跑天然幂等
+- 日期按**北京时间**记（Bing 接口给的是 UTC）；`sources` 写 `daily-api`，便于区分每日补的行
+- `flock` 防重叠，抓取失败 / 库不可写时写明原因并退出非 0
+- ⚠️ 本地跑 `bingimages/merge_bing_wallpapers.py` 重建库时是整表 DROP 重建，
+  `daily-api` 行会被抹掉，需重跑本脚本补回。线上没人跑 merge，不存在这个问题。
+  详见 `DEPLOY.md` 第 7 节
 
 ### 4K 可用性（不是所有图都有）
 

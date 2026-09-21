@@ -242,14 +242,39 @@ final class Config
         return $v > 0 ? $v : 200;
     }
 
+    /**
+     * Bing 首页归档接口。
+     *
+     * 可被 BING_API_URL 覆盖：一是 Bing 换域名时不用改代码，
+     * 二是可以指向一个不可达地址来验证「抓取失败」这条分支（见 DEPLOY.md）。
+     */
     public static function bingApiUrl(): string
     {
-        return 'https://www.bing.com/HPImageArchive.aspx';
+        return self::env('BING_API_URL', 'https://www.bing.com/HPImageArchive.aspx')
+            ?? 'https://www.bing.com/HPImageArchive.aspx';
     }
 
     public static function bingImageBase(): string
     {
         return 'https://www.bing.com';
+    }
+
+    /**
+     * 壁纸库数据集里的图片域名。
+     *
+     * ⚠️ 刻意与 bingImageBase() 分开，两者**不能混用**：
+     *   - bingImageBase() 给 /api/bing/today 用，是 www.bing.com，跟 Bing 接口原文一致；
+     *   - 这里给壁纸库（历史归档 + 每日写入）用，必须是 cn.bing.com。
+     *
+     * 为什么必须是 cn.bing.com：app/Archive.php 的 upgradeableTo4k() 只认这个域名
+     * （实测 cdn.bimg.cc 与 bing.com 的老图 Bing 侧根本没有 4K 版本，给了地址也是 404），
+     * 换成 www.bing.com 会让每一天的新行 url_4k 全变 null、4K 按钮集体失效。
+     * 数据集自身的约定也是 cn.bing.com —— 见 bingimages/merge_bing_wallpapers.py
+     * 的 BING_URL_PREFIX。
+     */
+    public static function archiveImageBase(): string
+    {
+        return rtrim(self::env('ARCHIVE_IMAGE_BASE', 'https://cn.bing.com') ?? '', '/');
     }
 
     public static function debug(): bool

@@ -62,6 +62,10 @@ const INCLUDE = [
   ['nginx-rewrite.conf', 'nginx-rewrite.conf'],
   // 运行时数据目录：只带一个占位文件，让目录在服务器上存在、便于授权
   ['data/.gitkeep', 'data/.gitkeep'],
+  // 壁纸库每日更新脚本 —— 服务器上由宝塔计划任务调用，必须随包发出去。
+  // 只带这一个文件，而不是整个 tools/：那里还有 serve.php / package.mjs /
+  // 两个 Python 脚本和 deploy.env，都是开发期的东西，线上不需要。
+  ['tools/update-archive.php', 'tools/update-archive.php'],
   // 部署说明
   ['DEPLOY.md', 'DEPLOY.md'],
 ]
