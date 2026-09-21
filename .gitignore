@@ -15,9 +15,16 @@ public/*
 data/*
 !data/.gitkeep
 
-# 壁纸库数据集：只随部署包分发（tools/package.mjs 从 ../bingimages 读），不进版本库。
+# 壁纸库数据集：只随部署包分发（tools/package.mjs 从 bingimages/ 读），不进版本库。
 # 正常情况下工作区里不会出现这个目录，这行是防止有人把部署包解压到项目根后误提交。
 dataset/
+
+# 壁纸库数据集源目录：本地产出、体量大，且内含两个参考仓库各自的 .git
+# （不忽略会被 git 当成 embedded repo 反复告警）。打包时只读引用，绝不入库。
+bingimages/
+
+# WorkBuddy 会话数据（日志 / 记忆 / 快照），不属于项目内容
+.workbuddy/
 
 # 日志
 *.log

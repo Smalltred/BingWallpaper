@@ -25,18 +25,18 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const OUT_ZIP = path.join(path.dirname(PROJECT_ROOT), 'bingwallpaper-deploy.zip')
+const OUT_ZIP = path.join(PROJECT_ROOT, 'bingwallpaper-deploy.zip')
 
 /**
- * 壁纸库数据集：由 bingimages 项目独立产出，这里**只读**引用。
+ * 壁纸库数据集：由 bingimages/ 目录独立产出，这里**只读**引用。
  *
  * 之前刻意不进包（怕两份漂移），代价是部署方必须手工把 db 传上去、还得自己写
  * BINGIMAGES_DIR —— 一步漏了就只坏「壁纸库」一个页面，排查成本很高。
  * 现在改成打进包里：漂移问题依然不存在（包是发布物，打进去的是那一刻的快照，
  * 线上跑的 db 由发布流程决定），而部署变成零配置。
- * 仓库里仍然**不放**这份数据 —— 它只存在于部署包和线上。
+ * 仓库里仍然**不放**这份数据（.gitignore 挡了 bingimages/）—— 它只存在于本地和部署包。
  */
-const DATASET_SRC = path.resolve(PROJECT_ROOT, '..', 'bingimages', 'bing_wallpapers.db')
+const DATASET_SRC = path.join(PROJECT_ROOT, 'bingimages', 'bing_wallpapers.db')
 const DATASET_ARCNAME = 'dataset/bing_wallpapers.db'
 
 /** 预置 .env 的模板。放在 tools/ 下而不是仓库根：根目录的 .env 是本地开发配置，两者不能混。 */
@@ -113,7 +113,7 @@ function readDataset() {
   if (!existsSync(DATASET_SRC)) {
     throw new Error(
       `找不到壁纸库数据集：${DATASET_SRC}\n` +
-        '  数据集由 ../bingimages 项目产出。缺它本包仍能构建，但壁纸库页会 503；\n' +
+        '  数据集由 bingimages/ 目录产出。缺它本包仍能构建，但壁纸库页会 503；\n' +
         '  若确实要打一个不含数据集的包，请显式注释掉 main() 里的 dataset 分支。'
     )
   }
@@ -262,7 +262,7 @@ function main() {
     }
   })
 
-  // ---- 数据集：读自 ../bingimages，只读，进包不进仓库 ----
+  // ---- 数据集：读自 bingimages/，只读，进包不进仓库 ----
   const dataset = readDataset()
   entries.push({
     arcname: DATASET_ARCNAME,
@@ -298,7 +298,7 @@ function main() {
     '',
     '已预置（无需手工配置）：',
     `  .env                       APP_ENV=production / SITE_ORIGIN / BINGIMAGES_DIR=dataset / TRUST_PROXY=1`,
-    `  ${DATASET_ARCNAME}   来源 ../bingimages/bing_wallpapers.db`,
+    `  ${DATASET_ARCNAME}   来源 bingimages/bing_wallpapers.db`,
     `                             大小 ${dataset.size.toLocaleString()} bytes`,
     `                             改动时间 ${stamp(dataset.mtime)}`,
     `                             sha256 ${dataset.sha.slice(0, 16)}`,

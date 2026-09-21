@@ -29,7 +29,7 @@ Windows 上装 PHP 有两个必配项，漏掉会直接导致接口 500，详见
 因为 `app/` 压根不在 Web 根里，HTTP 天然够不着。
 
 ```
-BingWallpaper/                  ← 解压到网站目录；Web 根是 public/
+必应图片展示/                   ← 仓库根（= 工作区根）；线上 Web 根是 public/
 ├── public/                    ★ Web 根（宝塔「运行目录」指向它）
 │   ├── index.php              前端控制器：所有请求的唯一入口
 │   ├── index.html             SPA 外壳（构建产物）
@@ -72,6 +72,7 @@ BingWallpaper/                  ← 解压到网站目录；Web 根是 public/
 │   ├── lint-php.php           对 app/ 与 public/ 全量 php -l
 │   ├── fetch-fonts.py         生成自托管字体
 │   └── make-og-image.py       生成 og-image.png
+├── bingimages/                壁纸库数据集源（不进仓库；打包时**只读**读入 → 包内 dataset/）
 ├── nginx-rewrite.conf         宝塔「伪静态」粘贴用
 ├── DEPLOY.md                  部署说明（随部署包分发）
 ├── .env.example
@@ -144,7 +145,7 @@ npm run dev:frontend             # 终端 2：Vite dev server :5173，/api 代�
 | `TRUST_PROXY` | 生产 `1` / 开发 `false` | 反向代理层数。**反代部署必须正确设置**，直连部署设 `0` |
 | `BING_CACHE_TTL` | `3600` | Bing 数据缓存秒数 |
 | `API_RATE_LIMIT_WINDOW` / `_MAX` | `60` / `200` | 限流窗口与上限 |
-| `BINGIMAGES_DIR` | `../bingimages` | 壁纸库数据集目录（相对项目根或绝对路径） |
+| `BINGIMAGES_DIR` | `bingimages` | 壁纸库数据集目录（相对项目根或绝对路径） |
 | `ARCHIVE_PAGE_SIZE` | `24` | 壁纸库每页条数（上限固定 100） |
 
 ## PHP 环境配置（Windows 必读）
@@ -238,7 +239,7 @@ php tools/serve.php
 npm run package          # = npm run build && node tools/package.mjs
 ```
 
-产出 `../bingwallpaper-deploy.zip`，内容是**编译好的前端 + PHP 后端 + 壁纸库数据集 + 预置 .env**，
+产出项目根下的 `bingwallpaper-deploy.zip`（已被 `.gitignore` 忽略），内容是**编译好的前端 + PHP 后端 + 壁纸库数据集 + 预置 .env**，
 布局就是本项目自身的目录结构：
 
 ```
@@ -261,10 +262,10 @@ npm run package          # = npm run build && node tools/package.mjs
 几个刻意的取舍：
 
 - **不带前端源码、`tools/`、`node_modules`**。部署包里放源码只会让「线上跑的到底是哪一份」变含糊。
-- **带壁纸库数据集，但仓库里不放**。数据集由 bingimages 项目独立产出，打包时从
-  `../bingimages/bing_wallpapers.db` **只读**读入、以 `dataset/bing_wallpapers.db` 进包。
+- **带壁纸库数据集，但仓库里不放**。数据集由 `bingimages/` 目录独立产出，打包时从
+  `bingimages/bing_wallpapers.db` **只读**读入、以 `dataset/bing_wallpapers.db` 进包。
   包的定位是「发布物快照」，所以不存在漂移问题；而部署方因此拿到的是零配置的整包。
-  仓库里仍然没有这份数据（`.gitignore` 也挡了 `dataset/`）。
+  仓库里仍然没有这份数据（`.gitignore` 同时挡了 `dataset/` 和 `bingimages/`）。
 - **把构建产物放进 `public/` 而不是让 PHP 去映射**。这是这次结构调整的核心 ——
   早期的做法是「构建产物在一个独立目录、URL 却是根路径 `/assets/`」，两者对不上，
   于是要靠 `^~` 覆盖面板的正则规则 + try_files 回退才能跑通，非常脆
@@ -287,9 +288,9 @@ npm run package          # = npm run build && node tools/package.mjs
 
 ### 数据集怎么接入
 
-后端**只读引用**数据集。开发时从 `../bingimages` 读；线上则由部署包内置在 `dataset/` 下。
+后端**只读引用**数据集。开发时从 `bingimages/` 读；线上则由部署包内置在 `dataset/` 下。
 
-- 默认路径：与本项目同级的 `../bingimages`（两个项目并排放在同一个工作区目录下即可）
+- 默认路径：项目根下的 `bingimages/`（它不在 Web 根内，HTTP 拿不到）
 - 可用 `BINGIMAGES_DIR` 覆盖，支持相对项目根的路径或绝对路径
 - 部署包里写的是 `BINGIMAGES_DIR=dataset`，即站点根下的 `dataset/` 目录
 - 打开连接后立刻执行 `PRAGMA query_only = 1`，从连接层禁止任何写操作落到数据集上

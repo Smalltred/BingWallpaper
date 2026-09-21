@@ -120,19 +120,20 @@ final class Config
     /**
      * bingimages 数据集（历史壁纸归档）所在目录。
      *
-     * 刻意用「配置指向外部目录」而不是把 DB 复制进本项目：
-     * 数据集由 bingimages 那边的 merge 脚本独立产出与更新，
-     * 复制进来就会有两份、并且必然漂移。这里只读引用它。
+     * 刻意用「配置指向数据目录」而不是把 DB 复制进 app/：数据集由
+     * bingimages/ 下的 merge 脚本独立产出与更新，复制进来就会有两份、
+     * 并且必然漂移。这里只读引用它。
      *
-     * 默认取与本项目同级的 ../bingimages，可用 BINGIMAGES_DIR 覆盖。
+     * 默认取项目根下的 bingimages/（它不在 Web 根 public/ 内，HTTP 拿不到），
+     * 可用 BINGIMAGES_DIR 覆盖。
      */
     public static function bingImagesDir(): string
     {
         $raw = trim((string) self::env('BINGIMAGES_DIR', ''));
 
         if ($raw === '') {
-            // dirname(projectRoot) = 项目根的上一级，拼上 bingimages
-            return str_replace('\\', '/', dirname(self::projectRoot())) . '/bingimages';
+            // 项目根下的 bingimages/ —— 与 app/ public/ 同级
+            return str_replace('\\', '/', self::projectRoot()) . '/bingimages';
         }
 
         $normalized = str_replace('\\', '/', $raw);

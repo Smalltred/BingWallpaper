@@ -228,7 +228,7 @@ BINGIMAGES_DIR=dataset
 前 16 位。想换新数据集，两条路：
 
 1. 重新打一个包（推荐）：在构建机上 `npm run package`，脚本会读当前
-   `../bingimages/bing_wallpapers.db` 打进新包；
+   `bingimages/bing_wallpapers.db` 打进新包；
 2. 只替换数据文件：把新的 `bing_wallpapers.db` 覆盖到站点根的 `dataset/` 下即可，
    **不需要改 .env，也不需要重启 PHP**。
 
