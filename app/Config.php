@@ -277,6 +277,20 @@ final class Config
         return rtrim(self::env('ARCHIVE_IMAGE_BASE', 'https://cn.bing.com') ?? '', '/');
     }
 
+    /**
+     * 「每天首次访问自动更新壁纸库」是否启用（默认启用）。
+     *
+     * 为什么留这个开关：它会在**每次请求**上自动生效，是本站唯一一处「访客会间接触发
+     * 出站请求」的功能。线上真出问题时，运维要能只改 .env 就把它关掉（改完不用重启 PHP），
+     * 而不是先去读懂并改动 public/index.php。关掉之后宝塔计划任务照旧兜底，功能不丢。
+     */
+    public static function archiveAutoUpdate(): bool
+    {
+        $raw = strtolower(trim((string) self::env('ARCHIVE_AUTO_UPDATE', '1')));
+
+        return !in_array($raw, ['0', 'false', 'off', 'no'], true);
+    }
+
     public static function debug(): bool
     {
         $raw = strtolower((string) self::env('APP_DEBUG', ''));

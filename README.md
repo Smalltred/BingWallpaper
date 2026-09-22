@@ -43,6 +43,7 @@ Windows 上装 PHP 有两个必配项，漏掉会直接导致接口 500，详见
 │   ├── Response.php           响应输出 + 安全头 + CORS
 │   ├── Bing.php               Bing 代理业务（抓取 / 4K 重写 / 入参校验）
 │   ├── Archive.php            壁纸库数据集访问（只读 SQLite + 搜索/筛选/分页）
+│   ├── ArchiveUpdater.php     壁纸库每日更新核心（首访自动触发 + CLI 共用；见「每日自动更新」）
 │   ├── BingException.php      带 HTTP 状态码的领域异常
 │   ├── Http.php               出站 HTTP（curl 优先，stream 回退）
 │   ├── Cache.php              文件缓存（TTL + 原子写）
@@ -50,7 +51,7 @@ Windows 上装 PHP 有两个必配项，漏掉会直接导致接口 500，详见
 │   ├── StaticFiles.php        静态文件服务（含目录穿越与 .php 防护）
 │   ├── Log.php                日志出口（兼容 cli / cli-server / fpm 三种 SAPI）
 │   └── views/docs.html        接口文档正文
-├── data/                      运行时数据（Bing 缓存、限流计数、更新脚本的锁与日志）—— 需可写
+├── data/                      运行时数据（Bing 缓存、限流计数、更新脚本的锁/日志/标记）—— 需可写
 ├── deploy/                    nginx 完整配置样例、php.ini 样例
 ├── frontend/                  Vue 3 + Vite（源码；构建输出到 ../public）
 │   ├── src/
@@ -70,7 +71,7 @@ Windows 上装 PHP 有两个必配项，漏掉会直接导致接口 500，详见
 │   ├── prebuild.mjs           构建前清理 public/ 旧产物（保留入口与 .htaccess）
 │   ├── package.mjs            打包部署包
 │   ├── lint-php.php           对 app/ public/ tools/ 全量 php -l
-│   ├── update-archive.php     壁纸库每日更新（计划任务调用；随部署包分发）
+│   ├── update-archive.php     壁纸库每日更新 CLI 入口（计划任务调用；随部署包分发）
 │   ├── fetch-fonts.py         生成自托管字体
 │   └── make-og-image.py       生成 og-image.png
 ├── bingimages/                壁纸库数据集源（不进仓库；打包时**只读**读入 → 包内 dataset/）
@@ -148,6 +149,8 @@ npm run dev:frontend             # 终端 2：Vite dev server :5173，/api 代�
 | `API_RATE_LIMIT_WINDOW` / `_MAX` | `60` / `200` | 限流窗口与上限 |
 | `BINGIMAGES_DIR` | `bingimages` | 壁纸库数据集目录（相对项目根或绝对路径） |
 | `ARCHIVE_PAGE_SIZE` | `24` | 壁纸库每页条数（上限固定 100） |
+| `ARCHIVE_AUTO_UPDATE` | `1` | 是否允许「每天首次访问」自动补壁纸库。设 `0` 关闭（cron 兜底仍可用） |
+| `ARCHIVE_IMAGE_BASE` | `https://cn.bing.com` | 归档图 URL 主机。**改成非 `cn.bing.com` 会失去 4K**，更新脚本会拒绝写库 |
 
 ## PHP 环境配置（Windows 必读）
 
@@ -305,7 +308,9 @@ npm run package          # = npm run build && node tools/package.mjs
 ### 每日自动更新
 
 数据集是 merge 脚本**离线**产出的，最后一天停在产出那一刻；之后每天的新壁纸由
-`tools/update-archive.php` 补上（线上用宝塔计划任务每天 08:00 跑一次）：
+`app/ArchiveUpdater.php` 补上。**默认每天首次访问站点时自动触发**（异步，不拖慢访客；
+拿到 `data/update-archive.lock` 才动手，当日已成功过就不再跑），
+**宝塔计划任务每天 08:00 跑一次是可选兜底**（覆盖「当天无人访问」）：
 
 ```bash
 php tools/update-archive.php            # 抓当天 + 倒序 7 天，写入库
@@ -315,6 +320,8 @@ php tools/update-archive.php --dry-run  # 只看会写什么
 - 只 `INSERT OR IGNORE`，**不 UPDATE / DELETE** —— `date` 是主键，重复跑天然幂等
 - 日期按**北京时间**记（Bing 接口给的是 UTC）；`sources` 写 `daily-api`，便于区分每日补的行
 - `flock` 防重叠，抓取失败 / 库不可写时写明原因并退出非 0
+- 成功后写 `data/archive-update.date`（当日标记）；失败写 `data/archive-update.failed`
+  并**退避 10 分钟**不再重试。`.env` 里 `ARCHIVE_AUTO_UPDATE=0` 可关掉首访触发（cron 不受影响）
 - ⚠️ 本地跑 `bingimages/merge_bing_wallpapers.py` 重建库时是整表 DROP 重建，
   `daily-api` 行会被抹掉，需重跑本脚本补回。线上没人跑 merge，不存在这个问题。
   详见 `DEPLOY.md` 第 7 节

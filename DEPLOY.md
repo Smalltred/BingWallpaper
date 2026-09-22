@@ -41,11 +41,12 @@
 ├── app/                     应用代码 —— 在 Web 根之外，HTTP 不可达
 │   ├── Config.php  Request.php  Response.php  Bing.php  Archive.php
 │   ├── Http.php  Cache.php  RateLimiter.php  StaticFiles.php  Log.php
+│   ├── ArchiveUpdater.php   壁纸库每日更新的核心（首访 / 计划任务共用，见第 7 节）
 │   └── views/docs.html      接口文档正文
 ├── dataset/                 壁纸库数据集 —— 已随包内置，Web 根之外
-│   └── bing_wallpapers.db   SQLite，约 1.8 MB（每天 08:00 由下面的脚本追加新行）
-├── data/                    运行时数据（Bing 缓存、限流计数、更新脚本的锁与日志）—— 需可写
-├── tools/                   └── update-archive.php  壁纸库每日更新脚本（计划任务调用，见第 7 节）
+│   └── bing_wallpapers.db   SQLite，约 1.8 MB（每天首次访问或 08:00 计划任务追加新行）
+├── data/                    运行时数据（Bing 缓存、限流计数、更新脚本的锁/日志/标记）—— 需可写
+├── tools/                   └── update-archive.php  壁纸库每日更新的 CLI 入口（见第 7 节）
 ├── deploy/                  nginx 完整配置样例、php.ini 样例
 ├── nginx-rewrite.conf       ← 要粘到面板「伪静态」里的内容
 ├── .env                     ★ 已预置好（生产配置），一般不用改
@@ -251,18 +252,31 @@ BINGIMAGES_DIR=dataset
 
 - **Web 后端只读** —— 连接后立刻 `PRAGMA query_only = 1`，从连接层禁止写操作落到数据集上，
   即使权限给多了也一样。这一点在代码层面保证。
-- **只有每日更新脚本会写** —— `tools/update-archive.php`，由计划任务调用，
-  每天往表里 `INSERT OR IGNORE` 若干行。它**不会** UPDATE/DELETE 既有行。
+- **只有每日更新代码会写** —— 核心是 `app/ArchiveUpdater.php`，由两条路径触发：
+  **每天首次访问**（异步、不拖慢访客，默认开）或**计划任务**（每天 08:00，可选兜底）。
+  两者都只往表里 `INSERT OR IGNORE` 若干行，**不会** UPDATE/DELETE 既有行。
   详见下一节。
 
 ## 7. 壁纸库每日自动更新
 
 数据集是 bingimages 项目用 merge 脚本**离线**产出的，最后一天停在产出那一刻。
-之后每天的新壁纸没人补，壁纸库页就会「越放越旧」。这一节用宝塔计划任务把缺口补上。
+之后每天的新壁纸没人补，壁纸库页就会「越放越旧」。这一节负责把缺口补上。
+
+**两种触发方式，目的都是「当天补上当天那张」：**
+
+| 方式 | 默认 | 作用 |
+|---|---|---|
+| **每天首次访问自动更新** | **开** | 有人打开站点就把当天缺口补上；不依赖任何外部调度 |
+| 宝塔计划任务（每天 08:00） | 可选 | 兜底 —— 某天**一个访客都没有**时，由 cron 补上 |
+
+两者**可以同时配**，不会冲突也不会重复写：它们共用同一把锁 `data/update-archive.lock`
+和同一个「今天已成功」标记 `data/archive-update.date`，谁先跑谁写，另一个看到标记
+就什么都不做。**这不是二选一。**
 
 ### 7.1 它做什么
 
-`tools/update-archive.php` 抓一次 Bing 首页归档（北京时间当天 + 倒序 7 天，共 8 条），
+两条触发路径最终都调用同一个核心类 `BingWallpaper\ArchiveUpdater`：
+抓一次 Bing 首页归档（北京时间当天 + 倒序 7 天，共 8 条），
 按数据集的既有约定组装成 15 列，`INSERT OR IGNORE` 进 `bing_wallpapers` 表。
 
 - **幂等**：`date` 是主键，同一天跑一百遍也只会有那一行；重复跑报告「新增 0 条」。
@@ -274,8 +288,55 @@ BINGIMAGES_DIR=dataset
 > 每天的日期按**北京时间**记（Bing 接口给的是 UTC，换算后正好是北京时间零点那天的壁纸）。
 > `region` 写 `zh-cn`、`sources` 写 `daily-api` —— 后者让你一眼能看出哪些行是每日补的。
 
-### 7.2 配计划任务（每天 08:00）
+### 7.2 首访自动更新（默认开启）
 
+站点入口 `public/index.php` 在 `Config::bootstrap()` 之后、路由之前会问一句
+`ArchiveUpdater::needsRun()`：**今天还没成功更新过吗？** 是的话就排一次后台更新。
+
+三个必须知道的点：
+
+1. **不拖慢访客**。更新**不在请求里同步跑** —— 先把响应完整吐给访客，再在
+   `register_shutdown_function` 里执行。线上 php-fpm 走 `fastcgi_finish_request()`
+   立即归还连接；没有这个函数的 SAPI（例如 Windows 内置服务器）退化为 `flush()`
+   冲刷输出缓冲，同样能在发完响应后再干活。**首访的响应时间不受影响。**
+2. **绝不影响页面**。整段逻辑包在 `try/catch` 里，任何异常只写 `Log::error`，
+   页面该渲染什么还是什么。响应已经发出去了，更新失败跟访客无关。
+3. **拿不到锁就安静跳过**。如果此时 cron 正在跑（锁被占），首访这条路径什么都不做，
+   直接放过 —— 不排队、不等待、不报错。
+
+**两个标记文件**（都在 `data/`，都已 ignore，不进部署包）：
+
+| 文件 | 内容 | 用途 |
+|---|---|---|
+| `data/archive-update.date` | 最后一次成功更新的日期 `YYYY-MM-DD` | 等于今天 ⇒ 今天不再更新 |
+| `data/archive-update.failed` | 第一行是 Unix 时间戳，之后是北京时间 + 原因 | 失败退避，见下 |
+
+**失败退避（10 分钟）**：抓取失败时**不写**成功标记，改写成失败标记。
+此后 10 分钟内 `needsRun()` 一律返回 false ⇒ 不会再向 Bing 发请求。
+这是为了避免 Bing 或本机网络抖动时，**每一个访客都去撞一次**、把请求量放大。
+10 分钟后自动允许重试；一旦某次成功，成功标记被写上，失败标记即刻作废。
+
+**顺带一提「Bing 还没换图」这种情况**：北京刚过零点时，Bing 首页归档里最新一张可能
+还是昨天的（CDN 有延迟）。这种情况下脚本**不记成功**，而是记一次退避 ——
+否则今天这张就会被永久跳过、要等到明天。退避到期后重试，拿到今天的图才记成功。
+
+**运维开关 `ARCHIVE_AUTO_UPDATE`**（`.env`，默认 `1` 开）：
+
+```dotenv
+# 关掉首访自动更新（cron 兜底不受影响，仍会继续跑）
+ARCHIVE_AUTO_UPDATE=0
+```
+
+这是本站**唯一**一处「访客访问会触发对外请求」的功能，所以留一个不用重启 PHP 就能
+关掉的口子。改成 `0` / `false` / `off` / `no` 都算关闭；只影响首访触发，
+`tools/update-archive.php` 手动 / cron 调用**照常工作**。
+
+部署包模板 `tools/deploy.env` 里这一行是**注释状态**（`# ARCHIVE_AUTO_UPDATE=0`），
+所以新包的默认就是**开着**的 —— 想改新包的默认值就改模板，想改已上线那份就改服务器上的 `.env`。
+
+### 7.3 配计划任务（每天 08:00，可选兜底）
+
+**如果你愿意让 cron 兜底**（推荐 —— 覆盖「某天无人访问」的情况），
 面板 → **计划任务** → 添加 → 任务类型选「Shell 脚本」，执行周期选「每天」，时间 `08:00`：
 
 ```bash
@@ -290,9 +351,13 @@ BINGIMAGES_DIR=dataset
 2. **用 root 跑**（面板默认）就**不需要给 `dataset/` 额外授权** —— root 本来就能写，
    而 Web 用户 www 只需要读。这样能保住第 3.5 节「只给 `data/` 授权、不扩大可写面」的做法。
    如果你偏要用 www 跑，那得 `chown -R www:www dataset`。
-3. **`data/` 必须对执行用户可写**（放锁文件与日志）。第 3.5 节已经做过这件事。
+3. **`data/` 必须对执行用户可写**（放锁文件、日志与标记文件）。第 3.5 节已经做过这件事。
+   首访自动更新也依赖 `data/` 可写 —— 两个路径共用同一个目录。
 
-### 7.3 手动补跑 / 核对
+> 注意：cron 那条命令**不需要**为「首访已经更新过」做特殊处理。它跑起来后看到
+> `data/archive-update.date` 已经是今天，就会报告「新增 0 条」并退出 0 —— 这是**正常且期望**的。
+
+### 7.4 手动补跑 / 核对
 
 ```bash
 cd /www/wwwroot/bing.hecady.com
@@ -306,6 +371,12 @@ php tools/update-archive.php
 # 看历史日志（每次一行摘要，方便 grep）
 tail -n 20 data/update-archive.log
 grep 更新 data/update-archive.log 2>/dev/null
+
+# 首访自动更新的「今天已成功」标记（有内容且等于今天，说明今日已补过）
+cat data/archive-update.date
+
+# 失败退避标记：只有存在时才说明最近一次失败并正在退避
+cat data/archive-update.failed 2>/dev/null
 ```
 
 正常输出长这样：
@@ -324,7 +395,18 @@ curl -s $BASE/api/archive/stats | head -c 200   # total 应比昨天 +1
 # 壁纸库页第一张应当就是今天
 ```
 
-### 7.4 ⚠️ 本地跑 merge 重建库之后，必须补跑一次
+想验证「首访自动更新」这条路径本身，服务器上这样复现（把成功标记改成昨天，
+然后访问一次首页，几秒后看库与标记）：
+
+```bash
+cd /www/wwwroot/bing.hecady.com
+echo "2026-01-01" > data/archive-update.date      # 伪装成今天还没更新
+curl -s -o /dev/null -w "%{http_code}\n" $BASE/   # 期望 200，且秒回（不被更新拖慢）
+sleep 5
+cat data/archive-update.date                      # 期望变成今天
+```
+
+### 7.5 ⚠️ 本地跑 merge 重建库之后，必须补跑一次
 
 `bingimages/merge_bing_wallpapers.py` 重建库时是**整表 DROP 再建**（`write_sqlite()`
 先 unlink 旧文件），所以它产出的库里**不含**任何 `daily-api` 行 —— 每日更新写进去的
@@ -333,6 +415,7 @@ curl -s $BASE/api/archive/stats | head -c 200   # total 应比昨天 +1
 - **服务器上没人跑 merge**，数据只由本脚本追加，所以线上不存在这个问题。
 - **本地**在 `bingimages/` 下跑完 merge 之后，请再跑一次：
   `php tools/update-archive.php`，把 recent 的几天补回来，再 `npm run package` 出新包。
+  （只跑首访路径也行，但会顺带打标记、不如直接用 CLI 干净。）
 - 想知道库里有几天是每日补的：
   `sqlite3 bingimages/bing_wallpapers.db "SELECT COUNT(*) FROM bing_wallpapers WHERE sources='daily-api'"`
 
@@ -370,14 +453,18 @@ curl -s -D - -o /dev/null -H "Origin: https://evil.example.com" $BASE/api/bing/t
 
 - 浏览器打开站点，按 **F12 → 网络**，刷新一次：**不应该有任何 404**。
 - 用**手机浏览器**打开一次：窄屏下导航只保留站内入口，确认「壁纸库」可点。
-- **壁纸库每日更新**配好后，手动跑一次并把结果对照本文第 7.3 节：
+- **壁纸库每日更新**：`data/archive-update.date` 里的日期是不是今天？是的话，
+  再手动跑一次 CLI 并把结果对照本文第 7.4 节：
 
   ```bash
   cd /www/wwwroot/bing.hecady.com
-  php tools/update-archive.php          # 期望「新增 ≥1 条」且退出码 0
-  php tools/update-archive.php          # 再跑一次，期望「新增 0 条」（幂等）
+  cat data/archive-update.date           # 今日已由首访补过的话，这里就是今天
+  php tools/update-archive.php          # 期望「新增 0 条」（幂等，退出码 0）
   echo $?                               # 期望 0
   ```
+
+  若想真跑一次写入，先把标记改成过去日期再执行 `php tools/update-archive.php`，
+  或直接走首访路径（见 7.4 末尾的复现步骤）。
 
 ## 9. 常见问题
 
@@ -392,9 +479,12 @@ curl -s -D - -o /dev/null -H "Origin: https://evil.example.com" $BASE/api/bing/t
 | 所有访客共用同一个限流额度，很快就 429 | `TRUST_PROXY` 与实际代理层数不符，见 3.6 |
 | 归档里部分年份的图不显示 | CSP 的 `img-src` 漏了那个年代的图床域名（Bing 图床换过三次），由 `app/Response.php` 统一发送 |
 | 上传/解压后 403 | 文件属主或权限不对，见 3.5 |
-| 计划任务显示「成功」但壁纸库一直不更新 | 任务里只写了 `php`，cron 的 `PATH` 找不到它 → 用 PHP 绝对路径，见 7.2 |
-| 更新脚本报「数据集不可写」 | 执行用户对 `dataset/` 没有写权限。用 root 跑，或 `chown -R www:www dataset`，见 7.2 |
-| 壁纸库比实际日期旧一天 | 脚本没在跑（先看 `data/update-archive.log`）；或本地跑过 merge 重建把 `daily-api` 行抹了，见 7.4 |
+| 计划任务显示「成功」但壁纸库一直不更新 | 任务里只写了 `php`，cron 的 `PATH` 找不到它 → 用 PHP 绝对路径，见 7.3 |
+| `data/` 不可写 | 首访自动更新会**直接放弃自动触发**（避免每次访问都白试），cron 也会失败。给 `data/` 写权限，见 3.5 / 7.3 |
+| 更新脚本报「数据集不可写」 | 执行用户对 `dataset/` 没有写权限。用 root 跑，或 `chown -R www:www dataset`，见 7.3 |
+| 壁纸库比实际日期旧一天 | 当天既无访客（cron 也没配）、或正在失败退避（看 `data/archive-update.failed`）；或本地跑过 merge 重建把 `daily-api` 行抹了，见 7.4 / 7.5 |
+| 首访没有触发更新 | 今天已有成功标记；或处于失败退避的 10 分钟内；或 `ARCHIVE_AUTO_UPDATE` 被设成了 0，见 7.2 |
+| 想让访客**永远不**触发对外请求 | `.env` 里设 `ARCHIVE_AUTO_UPDATE=0` 并保留 08:00 计划任务即可，见 7.2 |
 | 新补的行没有 4K 按钮 | `ARCHIVE_IMAGE_BASE` 被改成了非 `cn.bing.com`。该域名下 Bing 才有 4K，脚本会直接拒绝写库并报错，见 `app/Config.php` |
 
 > 关于 `/app/...` 返回 404 而不是 403：这是**正常的**。

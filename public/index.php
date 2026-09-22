@@ -19,6 +19,7 @@ declare(strict_types=1);
 ob_start();
 
 use BingWallpaper\Archive;
+use BingWallpaper\ArchiveUpdater;
 use BingWallpaper\Bing;
 use BingWallpaper\Cache;
 use BingWallpaper\Config;
@@ -76,6 +77,32 @@ if (is_file($projectRoot . '/vendor/autoload.php')) {
 }
 
 Config::bootstrap($projectRoot);
+
+// ============================================================
+//  壁纸库「每天首次访问」自动更新
+// ============================================================
+//
+// 背景：壁纸库的数据集是另一个项目离线产出的，最后一天停在产出那一刻。
+// 补新壁纸原先只靠宝塔计划任务（每天 08:00），没配 cron 的站点就会一直停在旧日期。
+// 这里让**每天第一个访客**顺手把它补上，不依赖 cron 也能保持最新。
+//
+// 位置与开销：只在启动阶段做一次 needsRun()（就是两次小文件读），
+// 不命中时开销可忽略 —— 命中概率每天只有寥寥几次。
+//
+// 关键：命中时**绝不在这个请求里同步跑更新**（那会让第一个访客白等 Bing 的 RTT）。
+// 实际执行放在请求收尾阶段，并且先把响应放给访客 —— 见 ArchiveUpdater::deferAfterResponse()。
+//
+// 与计划任务的关系：共用同一把锁与同一个当日标记，谁先跑成另一个当天就不必再跑；
+// cron 保留作兜底（没有访客的日子靠它）并且每次都会真跑，兼作自愈通道。
+$archiveUpdater = new ArchiveUpdater();
+try {
+    if ($archiveUpdater->needsRun()) {
+        $archiveUpdater->deferAfterResponse();
+    }
+} catch (Throwable $e) {
+    // 更新相关的任何问题都不能影响正常请求
+    Log::error('首访更新检查失败: ' . $e->getMessage());
+}
 
 // ---- 未捕获异常 → 统一 JSON 500 ----
 // 响应体绝不带异常细节：这是公开服务，堆栈只应进日志。
