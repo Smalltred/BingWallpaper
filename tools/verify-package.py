@@ -7,7 +7,8 @@
 
 注意断言设计：凡会随每日更新变化的东西（行数、最新日期、daily-api 行数）
 一律不做硬编码快照断言，改为与本地源库 bingimages/bing_wallpapers.db
-做 sha256 逐字节对比；源库本身由 tools/update-archive.php 维护。
+做 sha256 逐字节对比；源库本身由 app/ArchiveUpdater.php 维护
+（CLI 入口 tools/update-archive.php 与「每天首次访问」共用这一个核心）。
 """
 
 import hashlib
@@ -60,7 +61,30 @@ with zipfile.ZipFile(ZIP) as z:
     src_text = in_zip.decode("utf-8")
     check("包内脚本用的是修复后的项目根推导", "realpath($here . '/..')" in src_text)
     check("包内脚本没有退回 dirname(__DIR__) 的写法", "$projectRoot = dirname(__DIR__);" not in src_text)
-    check("包内脚本用的是 cn.bing.com", "archiveImageBase()" in src_text)
+
+    # 「写库的域名必须是 cn.bing.com」这条约束，在 2026-09-22 之后从 update-archive.php
+    # 移到了 app/ArchiveUpdater.php（CLI 变成薄壳，核心与「首访自动更新」共用）。
+    # 断言跟着挪，别只盯着旧文件 —— 否则会把「核心文件没发出去 / 域名被改坏」放过。
+    check("含 app/ArchiveUpdater.php", "app/ArchiveUpdater.php" in names)
+    updater_zip = z.read("app/ArchiveUpdater.php")
+    updater_src = (SRC / "app" / "ArchiveUpdater.php").read_bytes()
+    check(
+        "包内 ArchiveUpdater 与源文件字节一致",
+        hashlib.sha256(updater_zip).hexdigest() == hashlib.sha256(updater_src).hexdigest(),
+        f"sha256(前16) {hashlib.sha256(updater_zip).hexdigest()[:16]}",
+    )
+    updater_text = updater_zip.decode("utf-8")
+    check("写库路径用的是 Config::archiveImageBase()", "archiveImageBase()" in updater_text)
+
+    # 默认值本身必须是 cn.bing.com；4K 判定只认这个 host。两处一起断言，
+    # 才能保证「补进去的行 url_4k 不会全变 null」。
+    cfg_text = z.read("app/Config.php").decode("utf-8")
+    check(
+        "Config 默认归档域名是 cn.bing.com",
+        "ARCHIVE_IMAGE_BASE', 'https://cn.bing.com'" in cfg_text,
+    )
+    archive_text = z.read("app/Archive.php").decode("utf-8")
+    check("4K 判定只认 cn.bing.com", "'cn.bing.com'" in archive_text)
 
     print("\n=== 3. 只带了这一个 tools 文件（不带开发脚本）===")
     tools_entries = sorted(n for n in names if n.startswith("tools/"))
@@ -79,6 +103,7 @@ with zipfile.ZipFile(ZIP) as z:
 
     print("\n=== 5. 必需条目 ===")
     for required in ("public/index.php", "public/.htaccess", "app/Config.php", "app/Archive.php",
+                     "app/ArchiveUpdater.php",
                      "DEPLOY.md", ".env", "dataset/bing_wallpapers.db", "data/.gitkeep",
                      "BUILD-INFO.txt", "nginx-rewrite.conf"):
         check(f"含 {required}", required in names)
